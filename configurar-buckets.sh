@@ -1,9 +1,36 @@
 #!/bin/bash
-
 echo "================================================="
-echo "  CONFIGURAÇÃO BUCKETS AWS - MONTECH             "
+echo "      CONFIGURANDO AMBIENTE - MONTECH         "
 echo "================================================="
 echo ""
+
+echo "Configurando fuso horário de São Paulo..."
+sudo timedatectl set-timezone America/Sao_Paulo
+echo "Horário atual: $(date)"
+echo ""
+
+echo "Instalando dependências do sistema (Python, Pip, Venv, Unzip e Curl)..."
+sudo apt update && sudo apt install -y python3 python3-pip python3-venv unzip curl
+ls
+echo "Criando o ambiente virtual Python (venv)..."
+python3 -m venv venv
+
+echo "Instalando AWS CLI v2..."
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip -qo awscliv2.zip
+sudo ./aws/install --update
+rm -rf aws awscliv2.zip
+
+aws --version
+echo "INSTALAÇÃO DO AMBIENTE CONCLUÍDA"
+
+
+
+echo "================================================="
+echo "      CONFIGURAÇÃO BUCKETS AWS - MONTECH         "
+echo "================================================="
+echo ""
+
 
 # 1. Coleta de credenciais de forma interativa
 read -p "AWS Access Key ID: " AWS_ACCESS_KEY
