@@ -2,19 +2,17 @@
 
 Passo a passo automatizado e consolidado para implantação da infraestrutura: VM EC2 (Ubuntu), MySQL no Docker, Coletor de Métricas no Windows e ETL agendado.
 
----
-
 ## 📋 Visão Geral do Ambiente
 
-| Parte | Ambiente | O que faz |
-| :--- | :--- | :--- |
-| **Parte 0** | VM (SSH) | Provisionamento e auditoria de usuários (`config-acesso-ec2.sh`) |
-| **Parte 1** | VM (SSH) | Instalação do AWS CLI e criação automática dos buckets (`configurar-buckets.sh`) |
-| **Parte 2** | VM (SSH) | Instalação do Docker e subida do container MySQL |
-| **Parte 3** | Windows (PowerShell) | Coletor de métricas enviando CSV para o Data Lake |
-| **Parte 4** | VM (SSH) | Execução do ETL para as camadas Prata e Ouro |
-| **Parte 5** | VM (SSH) | Agendamento do ETL a cada 15 minutos via `cron` |
-| **Parte 6** | VM / Windows | Manutenção (renovação de credenciais) e solução de erros |
+| Parte | Ambiente | O que faz | 
+| ----- | ----- | ----- | 
+| **Parte 0** | VM (SSH) | Provisionamento e auditoria de usuários (`config-acesso-ec2.sh`) | 
+| **Parte 1** | VM (SSH) | Instalação do AWS CLI e criação automática dos buckets (`configurar-buckets.sh`) | 
+| **Parte 2** | VM (SSH) | Instalação do Docker e subida do container MySQL | 
+| **Parte 3** | Windows (PowerShell) | Coletor de métricas enviando CSV para o Data Lake | 
+| **Parte 4** | VM (SSH) | Execução do ETL para as camadas Prata e Ouro | 
+| **Parte 5** | VM (SSH) | Agendamento do ETL a cada 15 minutos via `cron` | 
+| **Parte 6** | VM / Windows | Manutenção (renovação de credenciais) e solução de erros | 
 
 ---
 
@@ -27,7 +25,7 @@ Conecte-se à VM EC2 via SSH e crie os usuários da equipe de forma automatizada
    ssh -i "CAMINHO_DA_CHAVE.pem" ubuntu@IP_PUBLICO
    ```
 
-2. **Criar e executar o script de acesso (`config-acesso-ec2.sh`):**
+2. **Criar o script de acesso (`config-acesso-ec2.sh`):**
    ```bash
    nano ~/config-acesso-ec2.sh
    ```
@@ -39,7 +37,7 @@ Conecte-se à VM EC2 via SSH e crie os usuários da equipe de forma automatizada
    sudo ~/config-acesso-ec2.sh
    ```
 
-4. **Conferir se os 6 usuários foram criados corretamente:**
+4. **Conferir se os usuários foram criados corretamente:**
    ```bash
    getent passwd guilherme thiago lucas vinicius nicole montech | cut -d: -f1
    ```
@@ -50,7 +48,7 @@ Conecte-se à VM EC2 via SSH e crie os usuários da equipe de forma automatizada
 
 O script abaixo já instala dependências, configura o AWS CLI e cria toda a estrutura do S3.
 
-1. **Criar e executar o script de configuração de buckets (`configurar-buckets.sh`):**
+1. **Criar o script de configuração de buckets (`configurar-buckets.sh`):**
    ```bash
    nano ~/configurar-buckets.sh
    ```
@@ -100,7 +98,7 @@ O script abaixo já instala dependências, configura o AWS CLI e cria toda a est
      -v montech_mysql_data:/var/lib/mysql \
      mysql:8.4
    ```
-   *Aguarde cerca de 30 segundos e verifique se subiu:*
+   *Aguarde cerca de 30 segundos e verifique os logs:*
    ```bash
    sudo docker logs --tail 30 montech-mysql
    ```
@@ -115,7 +113,7 @@ O script abaixo já instala dependências, configura o AWS CLI e cria toda a est
    ```bash
    sudo docker exec -i montech-mysql \
      sh -c 'mysql -u root -p"$MYSQL_ROOT_PASSWORD" montech' < ~/montech.sql
-
+   
    sudo docker exec -it montech-mysql \
      sh -c 'mysql -u montech -p"$MYSQL_PASSWORD" montech -e "SHOW TABLES;"'
    ```
@@ -126,8 +124,10 @@ O script abaixo já instala dependências, configura o AWS CLI e cria toda a est
 
 No seu computador local (**PowerShell**):
 
-1. **Instalar as dependências do projeto:**
+1. **Criar o ambiente virtual e instalar as dependências:**
    ```powershell
+   python -m venv venv
+   .\venv\Scripts\Activate
    python -m pip install pandas psutil boto3 mysql-connector-python python-dotenv
    ```
 
@@ -177,7 +177,8 @@ No seu computador local (**PowerShell**):
    sudo apt install -y python3-venv
    mkdir -p ~/montech-etl && cd ~/montech-etl
    python3 -m venv .venv
-   .venv/bin/python -m pip install pandas boto3 mysql-connector-python python-dotenv
+   source .venv/bin/activate
+   pip install pandas boto3 mysql-connector-python python-dotenv
    ```
 
 2. **Enviar os scripts do ETL (do Windows via SCP):**
@@ -199,7 +200,8 @@ No seu computador local (**PowerShell**):
 4. **Executar o ETL:**
    ```bash
    cd ~/montech-etl
-   .venv/bin/python etl_1.py
+   source .venv/bin/activate
+   python etl_1.py
    ```
 
 ---
@@ -211,7 +213,8 @@ No seu computador local (**PowerShell**):
    cat > ~/montech-etl/run_etl.sh << 'EOF'
    #!/bin/bash
    cd /home/ubuntu/montech-etl || exit 1
-   exec /usr/bin/flock -n etl.lock .venv/bin/python etl_1.py >> etl.log 2>&1
+   source .venv/bin/activate
+   exec /usr/bin/flock -n etl.lock python etl_1.py >> etl.log 2>&1
    EOF
    chmod +x ~/montech-etl/run_etl.sh
    ```
@@ -232,3 +235,4 @@ No seu computador local (**PowerShell**):
   aws configure set aws_secret_access_key "NOVA_SECRET_KEY"
   aws configure set aws_session_token "NOVA_SESSION_TOKEN"
   aws configure set region us-east-1
+  ```
