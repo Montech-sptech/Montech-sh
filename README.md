@@ -99,7 +99,7 @@ O script abaixo já instala dependências, configura o AWS CLI e cria toda a est
    ```bash
    sudo docker run -d --name montech-mysql --restart unless-stopped \
      --env-file "$HOME/montech-mysql.env" \
-     -p 127.0.0.1:3306:3306 \
+     -p 127.0.0.1:3307:3306 \
      -v montech_mysql_data:/var/lib/mysql \
      mysql:8.4
    ```
