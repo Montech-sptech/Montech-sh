@@ -157,12 +157,14 @@ No seu computador local (**PowerShell**):
    ```powershell
    ssh -i "CAMINHO_DA_CHAVE.pem" -L 3307:127.0.0.1:3306 ubuntu@IP_PUBLICO
    ```
+   *Abra outro terminal no mesmo diretório sem fechar esse da conexão SSH.*
    *Teste a conexão na janela principal:*
    ```powershell
    Test-NetConnection 127.0.0.1 -Port 3307
    ```
 
 5. **Executar o Coletor:**
+*No mesmo terminal que você rodou o teste acima*
    ```powershell
    python -m py_compile Script_Extracao.py Organizador.py
    python Script_Extracao.py
