@@ -20,6 +20,11 @@ Passo a passo automatizado e consolidado para implantação da infraestrutura: V
 
 Conecte-se à VM EC2 via SSH e crie os usuários da equipe de forma automatizada.
 
+0. **Mudar permissão da chave:**
+   ```bash
+   chmod 400 "CAMINHO_DA_CHAVE.pem"
+   ```
+
 1. **Conectar na VM:**
    ```bash
    ssh -i "CAMINHO_DA_CHAVE.pem" ubuntu@IP_PUBLICO
