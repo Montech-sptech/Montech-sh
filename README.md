@@ -7,7 +7,7 @@ Passo a passo automatizado e consolidado para implantação da infraestrutura: V
 | Parte | Ambiente | O que faz | 
 | ----- | ----- | ----- | 
 | **Parte 0** | VM (SSH) | Provisionamento e auditoria de usuários (`config-acesso-ec2.sh`) | 
-| **Parte 1** | VM (SSH) | Instalação do AWS CLI e criação automática dos buckets (`configurar-buckets.sh`) | 
+| **Parte 1** | VM (SSH) | Preparação do ambiente e criação do Data Lake S3 (`configurar-ambiente-datalake.sh`) | 
 | **Parte 2** | VM (SSH) | Instalação do Docker e subida do container MySQL | 
 | **Parte 3** | Windows (PowerShell) | Coletor de métricas enviando CSV para o Data Lake | 
 | **Parte 4** | VM (SSH) | Execução do ETL para as camadas Prata e Ouro | 
@@ -51,18 +51,18 @@ Conecte-se à VM EC2 via SSH e crie os usuários da equipe de forma automatizada
 
 ## ☁️ PARTE 1: AWS CLI e Buckets (Data Lake)
 
-O script abaixo já instala dependências, configura o AWS CLI e cria toda a estrutura do S3.
+O script abaixo já instala dependências (Python, OpenJDK 21), configura o AWS CLI e cria toda a estrutura do S3.
 
-1. **Criar o script de configuração de buckets (`configurar-buckets.sh`):**
+1. **Criar o script de configuração do ambiente e Data Lake (`configurar-ambiente-datalake.sh`):**
    ```bash
-   nano ~/configurar-buckets.sh
+   nano ~/configurar-ambiente-datalake.sh
    ```
-   *(Cole o conteúdo do seu script `configurar-buckets.sh`, salve e feche)*.
+   *(Cole o conteúdo do seu script `configurar-ambiente-datalake.sh`, salve e feche)*.
 
 2. **Executar o script:**
    ```bash
-   chmod +x ~/configurar-buckets.sh
-   ~/configurar-buckets.sh
+   chmod +x ~/configurar-ambiente-datalake.sh
+   ~/configurar-ambiente-datalake.sh
    ```
    *Nota: O script solicitará suas credenciais da AWS (`Access Key`, `Secret Key`, `Session Token`) e a região. Digite exatamente `us-east-1`.*
 

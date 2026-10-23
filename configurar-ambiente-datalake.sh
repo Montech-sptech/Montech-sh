@@ -74,6 +74,13 @@ executar_com_spinner "Instalando dependências do sistema (Python, Pip, Venv, Un
 
 executar_com_spinner "Criando o ambiente virtual Python (venv)..." "python3 -m venv venv"
 
+executar_com_spinner "Instalando OpenJDK 21..." \
+    "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-21-jdk"
+
+if command -v java &>/dev/null; then
+    echo -e "${AZUL}Versão Java instalada:${RESET} $(java -version 2>&1 | head -n 1)"
+fi
+
 executar_com_spinner "Instalando AWS CLI v2..." \
     "curl -fsSL 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o 'awscliv2.zip' && unzip -qo awscliv2.zip && sudo ./aws/install --update && rm -rf aws awscliv2.zip"
 
