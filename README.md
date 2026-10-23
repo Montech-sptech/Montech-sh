@@ -122,7 +122,9 @@ O script abaixo já instala dependências, configura o AWS CLI e cria toda a est
    sudo docker exec -it montech-mysql \
      sh -c 'mysql -u montech -p"$MYSQL_PASSWORD" montech -e "SHOW TABLES;"'
    ```
-# 🔐Segurança na porta MyQL na AWS
+---
+
+## 🔐 Parte 3: Segurança na porta MyQL na AWS
 Como a porta **3307** estará publicada nas interfaces de rede da VM, restrinja o acesso usando a **Security Group da VM** que hospeda o MySQL.
 
 * Na tela de **Instâncias**, selecione a VM que está o MySQL no container Docker.
@@ -135,11 +137,10 @@ Como a porta **3307** estará publicada nas interfaces de rede da VM, restrinja 
 * **Intervalo de portas** coloque **3307**.
 * Em **Origem** coloque o IP publico da máquina que deseja acessar o banco e **"/32"** no final (ex: 127.0.0.1/32).
 * Clique em **"Salvar regras"** e pronto!
----
 
-## 💻 PARTE 3: Coletor de Métricas (Windows)
+### 💻 PARTE 3.1: Coletor de Métricas (Windows)
 
-No seu computador local (**PowerShell**):
+No seu computador local simulando os servidores (**PowerShell**):
 
 1. **Criar o ambiente virtual e instalar as dependências:**
    ```powershell
@@ -186,6 +187,37 @@ No seu computador local (**PowerShell**):
    python -m py_compile Script_Extracao.py Organizador.py
    python Script_Extracao.py
    ```
+
+---
+
+### 💻 PARTE 3.2: Coletor de Métricas (Linux/Ubuntu)
+
+No seu computador local simulando os servidores (**Terminal**):
+
+1. Criar o script de instalação do Script de Captura (instalação-captura.sh):
+```bash
+nano ~/instalar-captura.sh
+```
+Colar o script `instalar-captura.sh`.
+
+2. Executar o script:
+```bash
+chmod +x ~/instalar-captura.sh
+~/instalar-captura.sh
+```
+Nota: O script solicitará o nome do Bucket `montech-datalake-2014`, a região, o IP público do servidor `18.212.230.200`, porta do MySQL `3307`, usuário do banco `montech`, senha do MySQL `urubu100`, nome do database `montech` e suas credenciais da AWS (`Access Key`, `Secret Key`, `Session Token`).
+
+3. Rodando o Script de Captura:
+```bash
+tmux new -s montech
+```
+Esse comando serve para criar uma sessão persistente, onde ele funcionará mesmo depois de desconectar do SSH
+
+4. Com ele você entrará numa sessão onde deve rodar:
+```bash
+montech-coletor/iniciar_coleta.sh
+```
+Nota: Ele vai pedir email, senha e token. O email use `carlos.silva@aeroportospaulistas.com.br` e na senha use `Admin@123` como teste. Em token utilize um token gerado por um servidor que esteja cadastrado no banco. Para sair é só utilizar `Ctrl + C` e depois 
 
 ---
 
