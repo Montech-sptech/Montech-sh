@@ -223,6 +223,12 @@ montech-coletor/iniciar_coleta.sh
 ```
 Nota: Ele vai pedir email, senha e token. O email use `carlos.silva@aeroportospaulistas.com.br` e na senha use `Admin@123` como teste. Em token utilize um token gerado por um servidor que esteja cadastrado no banco. Para sair é só utilizar `Ctrl + C` e depois 
 
+5. Extras:
+```bash
+tmux attach -t montech
+```
+É utilizado para voltar para uma sessão que foi aberta e não foi finalizada
+
 ---
 
 ## 🔄 PARTE 4: Executando o ETL na VM
