@@ -122,9 +122,11 @@ O script abaixo já instala dependências, configura o AWS CLI e cria toda a est
    sudo docker exec -it montech-mysql \
      sh -c 'mysql -u montech -p"$MYSQL_PASSWORD" montech -e "SHOW TABLES;"'
    ```
+   
+---
+## 🔐 Parte 3: Segurança na porta MyQL na AWS
 ---
 
-## 🔐 Parte 3: Segurança na porta MyQL na AWS
 Como a porta **3307** estará publicada nas interfaces de rede da VM, restrinja o acesso usando a **Security Group da VM** que hospeda o MySQL.
 
 * Na tela de **Instâncias**, selecione a VM que está o MySQL no container Docker.
@@ -138,7 +140,9 @@ Como a porta **3307** estará publicada nas interfaces de rede da VM, restrinja 
 * Em **Origem** coloque o IP publico da máquina que deseja acessar o banco e **"/32"** no final (ex: 127.0.0.1/32).
 * Clique em **"Salvar regras"** e pronto!
 
+---
 ### 💻 PARTE 3.1: Coletor de Métricas (Windows)
+---
 
 No seu computador local simulando os servidores (**PowerShell**):
 
@@ -189,8 +193,8 @@ No seu computador local simulando os servidores (**PowerShell**):
    ```
 
 ---
-
 ### 💻 PARTE 3.2: Coletor de Métricas (Linux/Ubuntu)
+---
 
 No seu computador local simulando os servidores (**Terminal**):
 
