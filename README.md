@@ -198,7 +198,7 @@ No seu computador local simulando os servidores (**PowerShell**):
 
 No seu computador local simulando os servidores (**Terminal**):
 
-1. Criar o script de instalação do Script de Captura (instalação-captura.sh):
+1. Criar o script de instalação do Script de Captura (instalar-captura.sh):
 ```bash
 nano ~/instalar-captura.sh
 ```
