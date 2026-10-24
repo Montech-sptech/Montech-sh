@@ -9,7 +9,8 @@ Passo a passo automatizado e consolidado para implantação da infraestrutura: V
 | **Parte 0** | VM (SSH) | Provisionamento e auditoria de usuários (`config-acesso-ec2.sh`) | 
 | **Parte 1** | VM (SSH) | Preparação do ambiente e criação do Data Lake S3 (`configurar-ambiente-datalake.sh`) | 
 | **Parte 2** | VM (SSH) | Instalação do Docker e subida do container MySQL | 
-| **Parte 3** | Windows (PowerShell) | Coletor de métricas enviando CSV para o Data Lake | 
+| **Parte 3.1** | Windows (PowerShell) | Coletor de métricas enviando CSV para o Data Lake | 
+| **Parte 3.2** | Linux (Bash) | Coletor de métricas enviando CSV para o Data Lake |
 | **Parte 4** | VM (SSH) | Execução do ETL para as camadas Prata e Ouro | 
 | **Parte 5** | VM (SSH) | Agendamento do ETL a cada 15 minutos via `cron` | 
 | **Parte 6** | VM / Windows | Manutenção (renovação de credenciais) e solução de erros | 
@@ -210,7 +211,7 @@ Colar o script `instalar-captura.sh`.
 chmod +x ~/instalar-captura.sh
 ~/instalar-captura.sh
 ```
-Nota: O script solicitará o nome do Bucket `montech-datalake-2014`, a região, o IP público do servidor `18.212.230.200`, porta do MySQL `3307`, usuário do banco `montech`, senha do MySQL `urubu100`, nome do database `montech` e suas credenciais da AWS (`Access Key`, `Secret Key`, `Session Token`).
+Nota: O script solicitará o nome do Bucket `montech-datalake-2014`, a região, o IP público do servidor `18.212.230.200`, porta do MySQL `3306`, usuário do banco `montech`, nome do database `montech` e suas credenciais da AWS (`Access Key`, `Secret Key`, `Session Token`).
 
 3. Rodando o Script de Captura:
 ```bash
