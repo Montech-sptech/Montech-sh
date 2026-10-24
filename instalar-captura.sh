@@ -15,28 +15,27 @@
 #    bash instalar-coletor.sh --credenciais só renova as credenciais AWS
 #
 #  Para automatizar (sem perguntas), defina antes: MONTECH_DB_HOST,
-#  MONTECH_DB_USER, MONTECH_DB_PASSWORD, MONTECH_DB_NAME, MONTECH_DB_PORT, MONTECH_BUCKET,
+#  MONTECH_DB_USER, MONTECH_DB_PASSWORD, MONTECH_DB_NAME, MONTECH_BUCKET,
 #  MONTECH_REGIAO, MONTECH_AWS_KEY, MONTECH_AWS_SECRET, MONTECH_AWS_TOKEN
 #  e, se quiser outra pasta, MONTECH_DIR.
 # ============================================================
 # Se foi chamado com "sh instalar-coletor.sh", reexecuta com bash.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
 set -uo pipefail
-
+ 
 # ---------- CONFIGURAÇÃO DA EQUIPE (edite antes de enviar ao cliente) ----------
 DEFAULT_DB_HOST=""            # IP/DNS do MySQL. Vazio = o cliente digita.
-DEFAULT_DB_PORT="3306"        # Porta publicada na VM (ex.: 3307).
 DEFAULT_DB_USER="montech"
 DEFAULT_DB_NAME="montech"
 # --------------------------------------------------------------------------------
-
+ 
 SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 INSTALL_DIR="${MONTECH_DIR:-$HOME/montech-coletor}"
 PY="$INSTALL_DIR/.venv/bin/python"
 AWS_DIR="$INSTALL_DIR/.aws"
 PYFILE="$INSTALL_DIR/Script_Extracao.py"
 LOG="$INSTALL_DIR/instalacao.log"
-
+ 
 # ---------- Mensagens ----------
 if [[ -t 1 ]]; then
   C_OK=$'\e[32m'; C_WARN=$'\e[33m'; C_ERR=$'\e[31m'; C_B=$'\e[1m'; C_OFF=$'\e[0m'
@@ -49,7 +48,63 @@ ok()     { printf '%s[OK]%s %s\n' "$C_OK" "$C_OFF" "$*"; }
 aviso()  { printf '%s[AVISO]%s %s\n' "$C_WARN" "$C_OFF" "$*"; }
 erro()   { printf '%s[ERRO]%s %s\n' "$C_ERR" "$C_OFF" "$*" >&2; }
 die()    { erro "$*"; exit 1; }
-
+ 
+# ---------- Barra girando (spinner) ----------
+SPIN_FRAMES='|/-\'
+SPIN_PID=""
+SPIN_SEG=0
+ 
+cursor_on() { [[ -t 1 ]] && printf '\e[?25h'; return 0; }
+ 
+interrompido() {
+  [[ -n "$SPIN_PID" ]] && kill "$SPIN_PID" 2>/dev/null
+  [[ -t 1 ]] && printf '\r\e[K\e[?25h'
+  printf '\n'; erro "Instalação interrompida."; exit 130
+}
+ 
+# spin_run ARQUIVO_SAIDA "mensagem" comando...
+# Roda o comando mostrando uma barra girando (só em terminal). A saída vai para o arquivo.
+# Deixa o tempo gasto em SPIN_SEG e devolve o status do comando.
+spin_run() {
+  local out=$1 msg=$2 inicio=$SECONDS rc i=0
+  shift 2
+  if [[ ! -t 1 ]]; then
+    info "$msg..."
+    "$@" >"$out" 2>&1 </dev/null; rc=$?
+    SPIN_SEG=$((SECONDS - inicio)); return $rc
+  fi
+  "$@" >"$out" 2>&1 </dev/null &
+  SPIN_PID=$!
+  printf '\e[?25l'
+  while kill -0 "$SPIN_PID" 2>/dev/null; do
+    printf '\r   %s%s%s %s (%ds)\e[K' "$C_B" "${SPIN_FRAMES:$((i % 4)):1}" "$C_OFF" "$msg" $((SECONDS - inicio))
+    i=$((i + 1)); sleep 0.12
+  done
+  wait "$SPIN_PID"; rc=$?
+  SPIN_PID=""
+  printf '\r\e[K\e[?25h'
+  SPIN_SEG=$((SECONDS - inicio))
+  return $rc
+}
+ 
+# passo "mensagem" comando...  -> spinner + saída anexada ao log de instalação
+passo() {
+  local msg=$1 tmp rc; shift
+  tmp=$(mktemp)
+  spin_run "$tmp" "$msg" "$@"; rc=$?
+  { printf '\n### %s (status %s)\n' "$msg" "$rc"; cat "$tmp"; } >>"$LOG"
+  rm -f "$tmp"
+  return $rc
+}
+ 
+# O sudo pode pedir senha: precisa ser antes do spinner, em primeiro plano.
+preparar_sudo() {
+  (( EUID == 0 )) && return 0
+  command -v sudo >/dev/null 2>&1 || return 1
+  info "É preciso permissão de administrador (sudo) para instalar pacotes."
+  sudo -v
+}
+ 
 uso() {
   cat <<'USO'
 Uso: bash instalar-coletor.sh [opção]
@@ -58,17 +113,19 @@ Uso: bash instalar-coletor.sh [opção]
   -h, --ajuda      mostra esta ajuda
 USO
 }
-
+ 
 # ---------- Perguntas ----------
-# Lê as respostas do terminal, mesmo se o script vier por pipe.
+# Lê as respostas do terminal. Se o stdin já é um terminal, lê direto dele (reabrir
+# /dev/stdin falha com "Permission denied" quando o terminal é de outro usuário, ex.: após su).
+# Se o script vier por pipe, usa /dev/tty.
 if [[ -t 0 ]]; then
-  TTY_IN=/dev/stdin
+  TTY_IN=stdin
 elif [[ -r /dev/tty ]] && { : </dev/tty; } 2>/dev/null; then
   TTY_IN=/dev/tty
 else
   TTY_IN=""
 fi
-
+ 
 # ask VAR "Pergunta" [padrão] [secreto] [opcional]
 # Se MONTECH_<VAR> estiver definida, usa o valor sem perguntar.
 ask() {
@@ -83,31 +140,34 @@ ask() {
     die "Sem terminal para perguntar \"$_label\". Defina a variável $_preset."
   fi
   [[ -n "$_def" && -z "$_secret" ]] && _prompt+=" [$_def]"
+  local _rd=(read -r)
+  [[ -n "$_secret" ]] && _rd+=(-s)
+  _rd+=(-p "$_prompt: ")
   while :; do
-    if [[ -n "$_secret" ]]; then
-      read -rsp "$_prompt: " _val <"$TTY_IN"; echo >&2
+    if [[ "$TTY_IN" == /dev/tty ]]; then
+      "${_rd[@]}" _val </dev/tty || die "Não consegui ler a resposta do terminal."
     else
-      read -rp "$_prompt: " _val <"$TTY_IN"
+      "${_rd[@]}" _val || die "Entrada encerrada antes de terminar as perguntas."
     fi
+    [[ -n "$_secret" ]] && echo >&2
     _val=${_val:-$_def}
     [[ -n "$_val" || -n "$_opt" ]] && break
     aviso "Valor obrigatório."
   done
   printf -v "$_var" '%s' "$_val"
 }
-
+ 
 # Remove qualquer espaço/quebra de linha (colagens costumam trazer lixo).
 sem_espacos() { printf '%s' "$1" | tr -d '[:space:]'; }
-
+ 
 # Validadores
 v_regiao() { [[ $1 =~ ^[a-z]{2}(-[a-z]+)+-[0-9]+$ ]]; }
 v_bucket() { [[ $1 =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]; }
 v_host()   { [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; }
-v_port()   { [[ $1 =~ ^[0-9]{1,5}$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
 v_ident()  { [[ $1 =~ ^[A-Za-z0-9_.-]+$ ]]; }
 v_chave()  { [[ $1 =~ ^[A-Za-z0-9]{16,128}$ ]]; }
 v_secret() { [[ $1 =~ ^[A-Za-z0-9/+=]{30,128}$ ]]; }
-
+ 
 # perguntar_valido VAR "Pergunta" "padrão" validador "mensagem de erro" [secreto]
 perguntar_valido() {
   local _var=$1 _label=$2 _def=$3 _fn=$4 _msg=$5 _secret=${6:-} _preset="MONTECH_$1"
@@ -119,7 +179,7 @@ perguntar_valido() {
     aviso "$_msg"
   done
 }
-
+ 
 # ---------- Sistema ----------
 como_root() {
   if (( EUID == 0 )); then "$@"
@@ -127,7 +187,7 @@ como_root() {
   else return 1
   fi
 }
-
+ 
 # pkg_instalar py|tmux
 pkg_instalar() {
   local apt_pk dnf_pk
@@ -136,63 +196,68 @@ pkg_instalar() {
     tmux) apt_pk="tmux"; dnf_pk="tmux" ;;
   esac
   if command -v apt-get >/dev/null 2>&1; then
-    como_root env DEBIAN_FRONTEND=noninteractive apt-get update -qq >>"$LOG" 2>&1
+    como_root env DEBIAN_FRONTEND=noninteractive apt-get update -qq
     # shellcheck disable=SC2086
-    como_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $apt_pk >>"$LOG" 2>&1
+    como_root env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $apt_pk
   elif command -v dnf >/dev/null 2>&1; then
     # shellcheck disable=SC2086
-    como_root dnf install -y -q $dnf_pk >>"$LOG" 2>&1
+    como_root dnf install -y -q $dnf_pk
   elif command -v yum >/dev/null 2>&1; then
     # shellcheck disable=SC2086
-    como_root yum install -y -q $dnf_pk >>"$LOG" 2>&1
+    como_root yum install -y -q $dnf_pk
   else
     return 1
   fi
 }
-
+ 
 python_ok() {
   command -v python3 >/dev/null 2>&1 &&
     python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)'
 }
-
+ 
 criar_venv() {
   [[ -x "$PY" ]] && return 0
-  python_ok && python3 -m venv "$INSTALL_DIR/.venv" >>"$LOG" 2>&1 && return 0
+  python_ok || return 1
+  passo "Criando o ambiente virtual Python" python3 -m venv "$INSTALL_DIR/.venv" && return 0
   rm -rf "$INSTALL_DIR/.venv"
   return 1
 }
-
+ 
 garantir_venv() {
-  criar_venv && return 0
-  info "Instalando Python no sistema (pode pedir sua senha de sudo)..."
-  pkg_instalar py || true
-  criar_venv || die "Não foi possível criar o ambiente Python (é preciso Python 3.9+ com venv e acesso à internet). Veja $LOG"
+  criar_venv && { ok "Ambiente virtual pronto."; return 0; }
+  info "Faltam componentes do Python neste servidor."
+  if preparar_sudo; then
+    passo "Instalando Python, venv e pip" pkg_instalar py || true
+  fi
+  criar_venv || die "Não foi possível criar o ambiente Python. É preciso Python 3.9+ com venv e pip (ex.: sudo apt install python3 python3-venv python3-pip) e internet. Veja $LOG"
+  ok "Ambiente virtual pronto."
 }
-
+ 
 instalar_dependencias() {
-  info "Instalando dependências Python (pode levar alguns minutos)..."
-  if ! "$PY" -m pip install --quiet --disable-pip-version-check \
-      pandas psutil boto3 mysql-connector-python python-dotenv >>"$LOG" 2>&1; then
+  if ! passo "Instalando dependências (pandas, boto3, mysql-connector...)" \
+      "$PY" -m pip install --quiet --disable-pip-version-check \
+      pandas psutil boto3 mysql-connector-python python-dotenv; then
     tail -n 12 "$LOG" >&2
     die "Falha ao instalar as dependências. Verifique a internet do servidor. Log: $LOG"
   fi
   "$PY" -c 'import pandas, psutil, boto3, mysql.connector, dotenv' >>"$LOG" 2>&1 ||
     die "As dependências foram instaladas, mas não importam. Veja $LOG"
-  ok "Dependências instaladas."
+  ok "Dependências instaladas (${SPIN_SEG}s)."
 }
-
+ 
 garantir_tmux() {
   command -v tmux >/dev/null 2>&1 && return 0
-  info "Instalando o tmux (mantém a coleta rodando se o SSH cair)..."
-  pkg_instalar tmux || true
-  command -v tmux >/dev/null 2>&1 ||
+  if preparar_sudo && passo "Instalando o tmux" pkg_instalar tmux && command -v tmux >/dev/null 2>&1; then
+    ok "tmux instalado (mantém a coleta rodando se o SSH cair)."
+  else
     aviso "Não consegui instalar o tmux. Instale tmux ou screen para manter a coleta ativa após fechar o SSH."
+  fi
   return 0
 }
-
+ 
 # ---------- Código do coletor ----------
 valor_py() { sed -n -E "s/^$1 = \"([^\"]*)\".*/\1/p" "$PYFILE" 2>/dev/null | head -n 1; }
-
+ 
 obter_codigo() {
   local origem; origem="$(cd "$(dirname "$SELF")" && pwd)"
   if [[ -f "$origem/Script_Extracao.py" && -f "$origem/Organizador.py" ]]; then
@@ -211,23 +276,22 @@ obter_codigo() {
   fi
   sed -i 's/\r$//' "$INSTALL_DIR/Script_Extracao.py" "$INSTALL_DIR/Organizador.py"
 }
-
+ 
 aplicar_config_py() {
   sed -i -E "s|^NOME_BUCKET = \".*\"|NOME_BUCKET = \"$BUCKET\"|; s|^REGIAO_AWS = \".*\"|REGIAO_AWS = \"$REGIAO\"|" "$PYFILE"
   [[ "$(valor_py NOME_BUCKET)" == "$BUCKET" && "$(valor_py REGIAO_AWS)" == "$REGIAO" ]] ||
     die "Não consegui gravar bucket/região no Script_Extracao.py (as linhas NOME_BUCKET e REGIAO_AWS mudaram?)."
   ok "Bucket $BUCKET na região $REGIAO."
 }
-
+ 
 # ---------- Arquivos de configuração ----------
 escapar_env() { local s=$1; s=${s//\\/\\\\}; s=${s//\'/\\\'}; printf '%s' "$s"; }
-
+ 
 escrever_env() {
   (
     umask 077
     {
       printf 'DB_HOST=%s\n' "$DB_HOST"
-      printf 'DB_PORT=%s\n' "$DB_PORT"
       printf 'DB_USER=%s\n' "$DB_USER"
       printf "DB_PASSWORD='%s'\n" "$(escapar_env "$DB_PASSWORD")"
       printf 'DB_NAME=%s\n' "$DB_NAME"
@@ -236,7 +300,7 @@ escrever_env() {
   chmod 600 "$INSTALL_DIR/.env"
   ok "Arquivo .env criado (permissão 600)."
 }
-
+ 
 escrever_aws() {
   mkdir -p "$AWS_DIR"; chmod 700 "$AWS_DIR"
   (
@@ -252,14 +316,14 @@ escrever_aws() {
   chmod 600 "$AWS_DIR/credentials" "$AWS_DIR/config"
   ok "Credenciais AWS gravadas em $AWS_DIR (isoladas, não mexem no ~/.aws do servidor)."
 }
-
+ 
 # Executa um comando só com as credenciais deste coletor (ignora variáveis AWS_* do ambiente).
 env_aws() {
   env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN \
       -u AWS_PROFILE -u AWS_DEFAULT_PROFILE -u AWS_DEFAULT_REGION \
       AWS_SHARED_CREDENTIALS_FILE="$AWS_DIR/credentials" AWS_CONFIG_FILE="$AWS_DIR/config" "$@"
 }
-
+ 
 escrever_launcher() {
   cat >"$INSTALL_DIR/iniciar_coleta.sh" <<'LAUNCHER'
 #!/usr/bin/env bash
@@ -275,14 +339,14 @@ LAUNCHER
   chmod +x "$INSTALL_DIR/iniciar_coleta.sh"
   ok "Criado iniciar_coleta.sh."
 }
-
+ 
 copiar_instalador() {
   local destino="$INSTALL_DIR/instalar-coletor.sh"
   if [[ -f "$SELF" && ! "$SELF" -ef "$destino" ]]; then
     cp "$SELF" "$destino" && chmod +x "$destino"
   fi
 }
-
+ 
 # ---------- Validações ----------
 dica_aws() {
   case "$1" in
@@ -298,10 +362,11 @@ dica_aws() {
       info "Dica: o arquivo de credenciais está vazio ou ilegível." ;;
   esac
 }
-
+ 
 validar_aws() {
-  local saida id_linha b_linha
-  saida=$(MONTECH_REGIAO="$REGIAO" MONTECH_BUCKET="$BUCKET" env_aws "$PY" - 2>&1 <<'PY'
+  local saida id_linha b_linha tmp script
+  tmp=$(mktemp); script=$(mktemp)
+  cat >"$script" <<'PY'
 import os
 import boto3
 reg, bucket = os.environ["MONTECH_REGIAO"], os.environ["MONTECH_BUCKET"]
@@ -317,7 +382,9 @@ try:
 except Exception as e:
     print("BUCKET_ERRO|" + str(e).replace("\n", " "))
 PY
-)
+  MONTECH_REGIAO="$REGIAO" MONTECH_BUCKET="$BUCKET" \
+    spin_run "$tmp" "Testando credenciais AWS e acesso ao bucket" env_aws "$PY" "$script" || true
+  saida=$(cat "$tmp"); rm -f "$tmp" "$script"
   id_linha=$(grep -m1 -E '^(OK|ERRO)\|' <<<"$saida" || true)
   b_linha=$(grep -m1 -E '^BUCKET_(OK|ERRO)' <<<"$saida" || true)
   if [[ "$id_linha" == OK\|* ]]; then
@@ -337,19 +404,19 @@ PY
   AWS_FALHOU=1
   return 1
 }
-
+ 
 validar_banco() {
-  local saida linha
-  saida=$(cd "$INSTALL_DIR" && "$PY" - 2>&1 <<'PY'
+  local saida linha tmp script
+  tmp=$(mktemp); script=$(mktemp)
+  cat >"$script" <<'PY'
 import os
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.getcwd(), ".env"))
 import mysql.connector
 try:
     c = mysql.connector.connect(
-        host=os.getenv("DB_HOST"), port=int(os.getenv("DB_PORT", "3306")),
-        user=os.getenv("DB_USER"), password=os.getenv("DB_PASSWORD"),
-        database=os.getenv("DB_NAME"),
+        host=os.getenv("DB_HOST"), user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"), database=os.getenv("DB_NAME"),
         connection_timeout=8,
     )
     cur = c.cursor()
@@ -360,7 +427,9 @@ try:
 except mysql.connector.Error as e:
     print("ERRO|%s|%s" % (e.errno, str(e).replace("\n", " ")))
 PY
-)
+  spin_run "$tmp" "Testando a conexão com o MySQL" \
+    bash -c 'cd "$1" && exec "$2" "$3"' _ "$INSTALL_DIR" "$PY" "$script" || true
+  saida=$(cat "$tmp"); rm -f "$tmp" "$script"
   linha=$(grep -m1 -E '^(OK|ERRO)\|' <<<"$saida" || true)
   case "$linha" in
     OK\|tabelas)
@@ -375,8 +444,8 @@ PY
         1045) info "Dica: usuário ou senha incorretos." ;;
         1049) info "Dica: o banco '$DB_NAME' não existe." ;;
         1044) info "Dica: o usuário não tem permissão no banco '$DB_NAME'." ;;
-        *)    info "Dica: confira o endereço, a porta DB_PORT, o firewall/Security Group e se o MySQL está acessível a partir deste servidor."
-              info "Se o MySQL só aceita conexões locais, é preciso túnel SSH ou liberar o acesso de forma restrita." ;;
+        *)    info "Dica: confira o endereço, o firewall/Security Group e se o MySQL está acessível a partir deste servidor."
+              info "O coletor usa sempre a porta 3306. Se o MySQL só aceita conexões locais, é preciso túnel SSH ou liberar o acesso." ;;
       esac
       return 1 ;;
     *)
@@ -384,22 +453,22 @@ PY
       return 1 ;;
   esac
 }
-
+ 
 # ---------- Fluxos ----------
 perguntar_aws() {
   ask AWS_KEY "AWS Access Key ID" "" ""
   AWS_KEY=$(sem_espacos "$AWS_KEY")
   v_chave "$AWS_KEY" || aviso "A Access Key tem um formato estranho (esperado: 16 a 128 letras/números)."
-  ask AWS_SECRET "AWS Secret Access Key (não aparece na tela)" "" secret
+  ask AWS_SECRET "AWS Secret Access Key" "" ""
   AWS_SECRET=$(sem_espacos "$AWS_SECRET")
   v_secret "$AWS_SECRET" || aviso "A Secret Access Key tem um formato estranho (esperado: 30+ caracteres base64)."
-  ask AWS_TOKEN "AWS Session Token (Enter se não usar; não aparece na tela)" "" secret optional
+  ask AWS_TOKEN "AWS Session Token (Enter se não usar)" "" "" optional
   AWS_TOKEN=$(sem_espacos "$AWS_TOKEN")
   if [[ -n "$AWS_TOKEN" && ${#AWS_TOKEN} -lt 100 ]]; then
     aviso "O Session Token parece curto (${#AWS_TOKEN} caracteres). Tokens costumam ter centenas; confira se foi colado inteiro."
   fi
 }
-
+ 
 modo_credenciais() {
   [[ -x "$PY" && -f "$PYFILE" ]] || die "Instalação não encontrada em $INSTALL_DIR. Rode a instalação completa primeiro."
   titulo "Renovar credenciais AWS"
@@ -413,17 +482,17 @@ modo_credenciais() {
     exit 1
   fi
 }
-
+ 
 modo_instalar() {
   [[ "$(uname -s)" == Linux ]] || die "Este instalador é para servidores Linux."
   mkdir -p "$INSTALL_DIR" || die "Não consegui criar $INSTALL_DIR."
   : >>"$LOG" || die "Sem permissão de escrita em $INSTALL_DIR."
-
+ 
   printf '%s\n' "$C_B=========================================================$C_OFF"
   printf '%s\n' "$C_B  MonTech - Instalação do coletor de métricas$C_OFF"
   printf '%s\n' "$C_B=========================================================$C_OFF"
   info "Pasta de instalação: $INSTALL_DIR"
-
+ 
   titulo "1/5 Código do coletor"
   local prev_bucket="" prev_regiao="" def_bucket def_regiao
   if [[ -f "$PYFILE" ]]; then prev_bucket=$(valor_py NOME_BUCKET); prev_regiao=$(valor_py REGIAO_AWS); fi
@@ -431,15 +500,14 @@ modo_instalar() {
   def_bucket=${prev_bucket:-$(valor_py NOME_BUCKET)}
   def_regiao=${prev_regiao:-$(valor_py REGIAO_AWS)}
   def_regiao=${def_regiao:-us-east-1}
-
-  local prev_host="" prev_port="" prev_user="" prev_name=""
+ 
+  local prev_host="" prev_user="" prev_name=""
   if [[ -f "$INSTALL_DIR/.env" ]]; then
     prev_host=$(sed -n -E 's/^DB_HOST=(.*)$/\1/p' "$INSTALL_DIR/.env" | head -n1)
-    prev_port=$(sed -n -E 's/^DB_PORT=(.*)$/\1/p' "$INSTALL_DIR/.env" | head -n1)
     prev_user=$(sed -n -E 's/^DB_USER=(.*)$/\1/p' "$INSTALL_DIR/.env" | head -n1)
     prev_name=$(sed -n -E 's/^DB_NAME=(.*)$/\1/p' "$INSTALL_DIR/.env" | head -n1)
   fi
-
+ 
   titulo "2/5 Configuração"
   info "Bucket S3 e região onde os CSVs serão enviados:"
   perguntar_valido BUCKET "Nome do bucket" "$def_bucket" v_bucket "Nome de bucket inválido (minúsculas, números, ponto e hífen)."
@@ -447,7 +515,6 @@ modo_instalar() {
   echo
   info "Banco MySQL da MonTech (usado para login, token e lista de componentes):"
   perguntar_valido DB_HOST "Endereço do MySQL (IP ou DNS)" "${prev_host:-$DEFAULT_DB_HOST}" v_host "Endereço inválido."
-   perguntar_valido DB_PORT "Porta do MySQL" "${prev_port:-$DEFAULT_DB_PORT}" v_port "Porta inválida (use um número entre 1 e 65535)."
   perguntar_valido DB_USER "Usuário do MySQL" "${prev_user:-$DEFAULT_DB_USER}" v_ident "Usuário inválido (use letras, números, _ . -)."
   while :; do
     ask DB_PASSWORD "Senha do MySQL (não aparece na tela)" "" secret
@@ -460,12 +527,12 @@ modo_instalar() {
   echo
   info "Credenciais AWS para enviar os CSVs ao S3:"
   perguntar_aws
-
+ 
   titulo "3/5 Ambiente Python"
   garantir_venv
   instalar_dependencias
   garantir_tmux
-
+ 
   titulo "4/5 Gravando configuração"
   aplicar_config_py
   escrever_env
@@ -474,13 +541,13 @@ modo_instalar() {
   copiar_instalador
   "$PY" -m py_compile "$INSTALL_DIR/Script_Extracao.py" "$INSTALL_DIR/Organizador.py" ||
     die "O código do coletor tem erro de sintaxe."
-
+ 
   titulo "5/5 Validando conexões"
   local pendencias=0
   AWS_FALHOU=0
   validar_banco || pendencias=$((pendencias + 1))
   validar_aws   || pendencias=$((pendencias + 1))
-
+ 
   titulo "Instalação concluída"
   info "Pasta: $INSTALL_DIR"
   echo
@@ -496,7 +563,7 @@ modo_instalar() {
     aviso "$pendencias validação(ões) falharam (veja acima). A instalação está pronta, mas corrija isso antes de coletar."
   fi
 }
-
+ 
 main() {
   case "${1:-}" in
     ""|--instalar)  modo_instalar ;;
@@ -505,167 +572,171 @@ main() {
     *) uso; exit 1 ;;
   esac
 }
-
+ 
+trap interrompido INT TERM
+trap cursor_on EXIT
+ 
 main "$@"
 exit $?
 
 # Tudo abaixo desta linha é o código do coletor (tar.gz em base64). Não edite.
 __MONTECH_PAYLOAD__
-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
-ulbX6lpdq2t1ra7V9X/i+m+BXHUrAKAAAA==
+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
+X47+C8LhBfwAoAAA
