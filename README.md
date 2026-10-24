@@ -249,6 +249,13 @@ tmux attach -t montech
    scp -i "CAMINHO_DA_CHAVE.pem" Organizador.py etl_1.py ubuntu@IP_PUBLICO:/home/ubuntu/montech-etl/
    ```
 
+2.1. **Ajustar nome do Bucket:**
+   ```bash
+   nano /home/ubuntu/montech-etl/etl_1.py
+   ```
+**Nota:** Altere a linha 33 o nome do Bucket para o nome do seu.
+     
+
 3. **Criar o `.env` do ETL na VM:**
    ```bash
    cat > ~/montech-etl/.env << 'EOF'
