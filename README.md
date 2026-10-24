@@ -88,6 +88,7 @@ O script abaixo já instala dependências (Python, OpenJDK 21), configura o AWS 
    cat > ~/montech-mysql.env << 'EOF'
    MYSQL_ROOT_PASSWORD=SENHA_ROOT
    MYSQL_DATABASE=montech
+   MYSQL_ROOT_HOST=localhost
    MYSQL_USER=montech
    MYSQL_PASSWORD=SENHA_MONTECH
    EOF
@@ -98,10 +99,10 @@ O script abaixo já instala dependências (Python, OpenJDK 21), configura o AWS 
 3. **Subir o container MySQL:**
    ```bash
    sudo docker run -d --name montech-mysql --restart unless-stopped \
-     --env-file "$HOME/montech-mysql.env" \
-     -p 3307:3306 \
-     -v montech_mysql_data:/var/lib/mysql \
-     mysql:8.4
+   --env-file "$HOME/montech-mysql.env" \
+   -p 3306:3306 \
+   -v montech_mysql_data:/var/lib/mysql \
+   mysql:8.4
    ```
    *Aguarde cerca de 30 segundos e verifique os logs:*
    ```bash
@@ -127,7 +128,7 @@ O script abaixo já instala dependências (Python, OpenJDK 21), configura o AWS 
 ## 🔐 Parte 3: Segurança na porta MyQL na AWS
 ---
 
-Como a porta **3307** estará publicada nas interfaces de rede da VM, restrinja o acesso usando a **Security Group da VM** que hospeda o MySQL.
+Como a porta **3306** estará publicada nas interfaces de rede da VM, restrinja o acesso usando a **Security Group da VM** que hospeda o MySQL.
 
 * Na tela de **Instâncias**, selecione a VM que está o MySQL no container Docker.
 * Selecione a opção **"Segurança"**.
@@ -135,8 +136,8 @@ Como a porta **3307** estará publicada nas interfaces de rede da VM, restrinja 
 * Clique no **"ID do grupo de segurança"** que vai estar em azul também.
 * Agora clique em **"Editar regras de entrada"**.
 * Clique em **"Adicionar regra"**.
-* Preenhca no **Tipo** com **TCP personalizado**.
-* **Intervalo de portas** coloque **3307**.
+* Preenhca no **Tipo** com **MYSQL/Aurora**.
+* **Intervalo de portas** coloque **3306**.
 * Em **Origem** coloque o IP publico da máquina que deseja acessar o banco e **"/32"** no final (ex: 127.0.0.1/32).
 * Clique em **"Salvar regras"** e pronto!
 
