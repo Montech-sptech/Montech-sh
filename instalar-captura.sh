@@ -22,20 +22,20 @@
 # Se foi chamado com "sh instalar-coletor.sh", reexecuta com bash.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
 set -uo pipefail
-
+ 
 # ---------- CONFIGURAÇÃO DA EQUIPE (edite antes de enviar ao cliente) ----------
 DEFAULT_DB_HOST=""            # IP/DNS do MySQL. Vazio = o cliente digita.
 DEFAULT_DB_USER="montech"
 DEFAULT_DB_NAME="montech"
 # --------------------------------------------------------------------------------
-
+ 
 SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 INSTALL_DIR="${MONTECH_DIR:-$HOME/montech-coletor}"
 PY="$INSTALL_DIR/.venv/bin/python"
 AWS_DIR="$INSTALL_DIR/.aws"
 PYFILE="$INSTALL_DIR/Script_Extracao.py"
 LOG="$INSTALL_DIR/instalacao.log"
-
+ 
 # ---------- Mensagens ----------
 if [[ -t 1 ]]; then
   C_OK=$'\e[32m'; C_WARN=$'\e[33m'; C_ERR=$'\e[31m'; C_B=$'\e[1m'; C_OFF=$'\e[0m'
@@ -113,7 +113,7 @@ Uso: bash instalar-coletor.sh [opção]
   -h, --ajuda      mostra esta ajuda
 USO
 }
-
+ 
 # ---------- Perguntas ----------
 # Lê as respostas do terminal. Se o stdin já é um terminal, lê direto dele (reabrir
 # /dev/stdin falha com "Permission denied" quando o terminal é de outro usuário, ex.: após su).
@@ -125,7 +125,7 @@ elif [[ -r /dev/tty ]] && { : </dev/tty; } 2>/dev/null; then
 else
   TTY_IN=""
 fi
-
+ 
 # ask VAR "Pergunta" [padrão] [secreto] [opcional]
 # Se MONTECH_<VAR> estiver definida, usa o valor sem perguntar.
 ask() {
@@ -156,10 +156,10 @@ ask() {
   done
   printf -v "$_var" '%s' "$_val"
 }
-
+ 
 # Remove qualquer espaço/quebra de linha (colagens costumam trazer lixo).
 sem_espacos() { printf '%s' "$1" | tr -d '[:space:]'; }
-
+ 
 # Validadores
 v_regiao() { [[ $1 =~ ^[a-z]{2}(-[a-z]+)+-[0-9]+$ ]]; }
 v_bucket() { [[ $1 =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]]; }
@@ -167,7 +167,7 @@ v_host()   { [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; }
 v_ident()  { [[ $1 =~ ^[A-Za-z0-9_.-]+$ ]]; }
 v_chave()  { [[ $1 =~ ^[A-Za-z0-9]{16,128}$ ]]; }
 v_secret() { [[ $1 =~ ^[A-Za-z0-9/+=]{30,128}$ ]]; }
-
+ 
 # perguntar_valido VAR "Pergunta" "padrão" validador "mensagem de erro" [secreto]
 perguntar_valido() {
   local _var=$1 _label=$2 _def=$3 _fn=$4 _msg=$5 _secret=${6:-} _preset="MONTECH_$1"
@@ -179,7 +179,7 @@ perguntar_valido() {
     aviso "$_msg"
   done
 }
-
+ 
 # ---------- Sistema ----------
 como_root() {
   if (( EUID == 0 )); then "$@"
@@ -187,7 +187,7 @@ como_root() {
   else return 1
   fi
 }
-
+ 
 # pkg_instalar py|tmux
 pkg_instalar() {
   local apt_pk dnf_pk
@@ -209,12 +209,12 @@ pkg_instalar() {
     return 1
   fi
 }
-
+ 
 python_ok() {
   command -v python3 >/dev/null 2>&1 &&
     python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)'
 }
-
+ 
 criar_venv() {
   [[ -x "$PY" ]] && return 0
   python_ok || return 1
@@ -222,7 +222,7 @@ criar_venv() {
   rm -rf "$INSTALL_DIR/.venv"
   return 1
 }
-
+ 
 garantir_venv() {
   criar_venv && { ok "Ambiente virtual pronto."; return 0; }
   info "Faltam componentes do Python neste servidor."
@@ -232,7 +232,7 @@ garantir_venv() {
   criar_venv || die "Não foi possível criar o ambiente Python. É preciso Python 3.9+ com venv e pip (ex.: sudo apt install python3 python3-venv python3-pip) e internet. Veja $LOG"
   ok "Ambiente virtual pronto."
 }
-
+ 
 instalar_dependencias() {
   if ! passo "Instalando dependências (pandas, boto3, mysql-connector...)" \
       "$PY" -m pip install --quiet --disable-pip-version-check \
@@ -244,7 +244,7 @@ instalar_dependencias() {
     die "As dependências foram instaladas, mas não importam. Veja $LOG"
   ok "Dependências instaladas (${SPIN_SEG}s)."
 }
-
+ 
 garantir_tmux() {
   command -v tmux >/dev/null 2>&1 && return 0
   if preparar_sudo && passo "Instalando o tmux" pkg_instalar tmux && command -v tmux >/dev/null 2>&1; then
@@ -254,10 +254,10 @@ garantir_tmux() {
   fi
   return 0
 }
-
+ 
 # ---------- Código do coletor ----------
 valor_py() { sed -n -E "s/^$1 = \"([^\"]*)\".*/\1/p" "$PYFILE" 2>/dev/null | head -n 1; }
-
+ 
 obter_codigo() {
   local origem; origem="$(cd "$(dirname "$SELF")" && pwd)"
   if [[ -f "$origem/Script_Extracao.py" && -f "$origem/Organizador.py" ]]; then
@@ -276,17 +276,17 @@ obter_codigo() {
   fi
   sed -i 's/\r$//' "$INSTALL_DIR/Script_Extracao.py" "$INSTALL_DIR/Organizador.py"
 }
-
+ 
 aplicar_config_py() {
   sed -i -E "s|^NOME_BUCKET = \".*\"|NOME_BUCKET = \"$BUCKET\"|; s|^REGIAO_AWS = \".*\"|REGIAO_AWS = \"$REGIAO\"|" "$PYFILE"
   [[ "$(valor_py NOME_BUCKET)" == "$BUCKET" && "$(valor_py REGIAO_AWS)" == "$REGIAO" ]] ||
     die "Não consegui gravar bucket/região no Script_Extracao.py (as linhas NOME_BUCKET e REGIAO_AWS mudaram?)."
   ok "Bucket $BUCKET na região $REGIAO."
 }
-
+ 
 # ---------- Arquivos de configuração ----------
 escapar_env() { local s=$1; s=${s//\\/\\\\}; s=${s//\'/\\\'}; printf '%s' "$s"; }
-
+ 
 escrever_env() {
   (
     umask 077
@@ -300,7 +300,7 @@ escrever_env() {
   chmod 600 "$INSTALL_DIR/.env"
   ok "Arquivo .env criado (permissão 600)."
 }
-
+ 
 escrever_aws() {
   mkdir -p "$AWS_DIR"; chmod 700 "$AWS_DIR"
   (
@@ -316,14 +316,14 @@ escrever_aws() {
   chmod 600 "$AWS_DIR/credentials" "$AWS_DIR/config"
   ok "Credenciais AWS gravadas em $AWS_DIR (isoladas, não mexem no ~/.aws do servidor)."
 }
-
+ 
 # Executa um comando só com as credenciais deste coletor (ignora variáveis AWS_* do ambiente).
 env_aws() {
   env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN \
       -u AWS_PROFILE -u AWS_DEFAULT_PROFILE -u AWS_DEFAULT_REGION \
       AWS_SHARED_CREDENTIALS_FILE="$AWS_DIR/credentials" AWS_CONFIG_FILE="$AWS_DIR/config" "$@"
 }
-
+ 
 escrever_launcher() {
   cat >"$INSTALL_DIR/iniciar_coleta.sh" <<'LAUNCHER'
 #!/usr/bin/env bash
@@ -339,14 +339,14 @@ LAUNCHER
   chmod +x "$INSTALL_DIR/iniciar_coleta.sh"
   ok "Criado iniciar_coleta.sh."
 }
-
+ 
 copiar_instalador() {
   local destino="$INSTALL_DIR/instalar-coletor.sh"
   if [[ -f "$SELF" && ! "$SELF" -ef "$destino" ]]; then
     cp "$SELF" "$destino" && chmod +x "$destino"
   fi
 }
-
+ 
 # ---------- Validações ----------
 dica_aws() {
   case "$1" in
@@ -362,7 +362,7 @@ dica_aws() {
       info "Dica: o arquivo de credenciais está vazio ou ilegível." ;;
   esac
 }
-
+ 
 validar_aws() {
   local saida id_linha b_linha tmp script
   tmp=$(mktemp); script=$(mktemp)
@@ -404,7 +404,7 @@ PY
   AWS_FALHOU=1
   return 1
 }
-
+ 
 validar_banco() {
   local saida linha tmp script
   tmp=$(mktemp); script=$(mktemp)
@@ -448,7 +448,9 @@ PY
   spin_run "$tmp" "Testando a conexão com o MySQL" \
     bash -c 'cd "$1" && exec "$2" "$3"' _ "$INSTALL_DIR" "$PY" "$script" || true
   saida=$(cat "$tmp"); rm -f "$tmp" "$script"
+
   linha=$(grep -m1 -E '^(OK|ERRO|FALTA|STATUS)\|' <<<"$saida" || true)
+
   case "$linha" in
     OK\|completo)
       ok "Banco acessível e com as tabelas esperadas ($DB_USER@$DB_HOST/$DB_NAME)."; return 0 ;;
@@ -482,7 +484,7 @@ PY
       return 1 ;;
   esac
 }
-
+ 
 # ---------- Fluxos ----------
 perguntar_aws() {
   ask AWS_KEY "AWS Access Key ID" "" ""
@@ -497,7 +499,7 @@ perguntar_aws() {
     aviso "O Session Token parece curto (${#AWS_TOKEN} caracteres). Tokens costumam ter centenas; confira se foi colado inteiro."
   fi
 }
-
+ 
 modo_credenciais() {
   [[ -x "$PY" && -f "$PYFILE" ]] || die "Instalação não encontrada em $INSTALL_DIR. Rode a instalação completa primeiro."
   titulo "Renovar credenciais AWS"
@@ -511,17 +513,17 @@ modo_credenciais() {
     exit 1
   fi
 }
-
+ 
 modo_instalar() {
   [[ "$(uname -s)" == Linux ]] || die "Este instalador é para servidores Linux."
   mkdir -p "$INSTALL_DIR" || die "Não consegui criar $INSTALL_DIR."
   : >>"$LOG" || die "Sem permissão de escrita em $INSTALL_DIR."
-
+ 
   printf '%s\n' "$C_B=========================================================$C_OFF"
   printf '%s\n' "$C_B  MonTech - Instalação do coletor de métricas$C_OFF"
   printf '%s\n' "$C_B=========================================================$C_OFF"
   info "Pasta de instalação: $INSTALL_DIR"
-
+ 
   titulo "1/5 Código do coletor"
   local prev_bucket="" prev_regiao="" def_bucket def_regiao
   if [[ -f "$PYFILE" ]]; then prev_bucket=$(valor_py NOME_BUCKET); prev_regiao=$(valor_py REGIAO_AWS); fi
@@ -536,7 +538,7 @@ modo_instalar() {
     prev_user=$(sed -n -E 's/^DB_USER=(.*)$/\1/p' "$INSTALL_DIR/.env" | head -n1)
     prev_name=$(sed -n -E 's/^DB_NAME=(.*)$/\1/p' "$INSTALL_DIR/.env" | head -n1)
   fi
-
+ 
   titulo "2/5 Configuração"
   info "Bucket S3 e região onde os CSVs serão enviados:"
   perguntar_valido BUCKET "Nome do bucket" "$def_bucket" v_bucket "Nome de bucket inválido (minúsculas, números, ponto e hífen)."
@@ -556,12 +558,12 @@ modo_instalar() {
   echo
   info "Credenciais AWS para enviar os CSVs ao S3:"
   perguntar_aws
-
+ 
   titulo "3/5 Ambiente Python"
   garantir_venv
   instalar_dependencias
   garantir_tmux
-
+ 
   titulo "4/5 Gravando configuração"
   aplicar_config_py
   escrever_env
@@ -570,13 +572,13 @@ modo_instalar() {
   copiar_instalador
   "$PY" -m py_compile "$INSTALL_DIR/Script_Extracao.py" "$INSTALL_DIR/Organizador.py" ||
     die "O código do coletor tem erro de sintaxe."
-
+ 
   titulo "5/5 Validando conexões"
   local pendencias=0
   AWS_FALHOU=0
   validar_banco || pendencias=$((pendencias + 1))
   validar_aws   || pendencias=$((pendencias + 1))
-
+ 
   titulo "Instalação concluída"
   info "Pasta: $INSTALL_DIR"
   echo
@@ -592,7 +594,7 @@ modo_instalar() {
     aviso "$pendencias validação(ões) falharam (veja acima). A instalação está pronta, mas corrija isso antes de coletar."
   fi
 }
-
+ 
 main() {
   case "${1:-}" in
     ""|--instalar)  modo_instalar ;;
@@ -604,6 +606,7 @@ main() {
 
 trap interrompido INT TERM
 trap cursor_on EXIT
+
 
 main "$@"
 exit $?
@@ -726,3 +729,4 @@ kNURYYOdi2DadkrnbSwDlrGNzn5brASj5iBL7fJxkxAz+gORtHUG9SvmOpQ1d+ytwhIfxTmcRCFm
 rrLxLZ2d14vLdVV/Mk4okU240h/ENnGzCie89RQX4w4U+eGWhfbiBQzqa4UAt2nbRcVMhV0ai5Ra
 prD1eodi48oKutKyUIat8TKtwedGIDvfG3+JHHVGm33L5h4pAqt1+9W1ulbX6lpdq2t1ra7VtbpW
 1+paXatrda2u1bW6VtfqWl2ra9n133TdUxoAeAAA
+
