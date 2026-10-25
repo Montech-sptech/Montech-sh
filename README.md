@@ -305,7 +305,7 @@ Colar o script `instalar-captura.sh`.
 chmod +x ~/instalar-captura.sh
 ~/instalar-captura.sh
 ```
-Nota: O script solicitará o nome do Bucket `montech-datalake-2014`, a região, o IP público do servidor `18.212.230.200`, porta do MySQL `3306`, usuário do banco `montech`, nome do database `montech` e suas credenciais da AWS (`Access Key`, `Secret Key`, `Session Token`).
+Nota: O script solicitará o nome do Bucket `montech-datalake-2014`, a região, o IP público do servidor `18.212.230.200`, usuário do banco `montech`, nome do database `montech` e suas credenciais da AWS (`Access Key`, `Secret Key`, `Session Token`).
 
 3. Rodando o Script de Captura:
 ```bash
