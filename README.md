@@ -6,18 +6,56 @@ Passo a passo automatizado e consolidado para implantação da infraestrutura: V
 
 | Parte | Ambiente | O que faz | 
 | ----- | ----- | ----- | 
-| **Parte 0** | VM (SSH) | Provisionamento e auditoria de usuários (`config-acesso-ec2.sh`) | 
-| **Parte 1** | VM (SSH) | Preparação do ambiente e criação do Data Lake S3 (`configurar-ambiente-datalake.sh`) | 
-| **Parte 2** | VM (SSH) | Instalação do Docker e subida do container MySQL | 
-| **Parte 3.1** | Windows (PowerShell) | Coletor de métricas enviando CSV para o Data Lake | 
-| **Parte 3.2** | Linux (Bash) | Coletor de métricas enviando CSV para o Data Lake |
-| **Parte 4** | VM (SSH) | Execução do ETL para as camadas Prata e Ouro | 
-| **Parte 5** | VM (SSH) | Agendamento do ETL a cada 15 minutos via `cron` | 
-| **Parte 6** | VM / Windows | Manutenção (renovação de credenciais) e solução de erros | 
+| **Parte 1** | VM (SSH) | EC2 - Ip elástico | 
+| **Parte 2** | VM (SSH) | Provisionamento e auditoria de usuários (`config-acesso-ec2.sh`) | 
+| **Parte 3** | VM (SSH) | Preparação do ambiente e criação do Data Lake S3 (`configurar-ambiente-datalake.sh`) | 
+| **Parte 4** | VM (SSH) | Instalação do Docker e subida do container MySQL | 
+| **Parte 6.1** | Windows (PowerShell) | Coletor de métricas enviando CSV para o Data Lake | 
+| **Parte 6.2** | Linux (Bash) | Coletor de métricas enviando CSV para o Data Lake |
+| **Parte 7** | VM (SSH) | Execução do ETL para as camadas Prata e Ouro | 
+| **Parte 8** | VM (SSH) | Agendamento do ETL a cada 15 minutos via `cron` | 
+| **Parte 9** | VM / Windows | Manutenção (renovação de credenciais) e solução de erros | 
 
 ---
 
-## 🛠️ PARTE 0: Acesso e Política de Usuários
+## 🌐 PARTE 1: Configuração do IP Elástico (IP Fixo)
+
+Por padrão, o IP público de uma instância EC2 muda sempre que ela é parada e iniciada novamente. Para manter um endereço fixo associe um **IP Elástico** à instância.
+
+1. **Acessar o console da AWS:**
+   - Entre em **EC2** → no menu lateral, em **Rede e segurança**, clique em **IPs elásticos** (*Elastic IPs*).
+
+2. **Alocar um novo endereço:**
+   - Clique em **Alocar endereço IP elástico** (*Allocate Elastic IP address*).
+   - Em *Grupo de bordas de rede*, mantenha a região padrão e em *Pool de endereços IPv4* deixe **Pool de endereços IPv4 da Amazon**.
+   - Clique em **Alocar**.
+
+3. **Associar o IP à instância:**
+   - Selecione o IP recém-criado → **Ações** → **Associar endereço IP elástico**.
+   - Em *Tipo de recurso*, escolha **Instância**.
+   - Selecione a instância EC2 do projeto.
+   - Em *Endereço IP privado*, escolha o IP privado listado para a instância.
+   - Clique em **Associar**.
+
+4. **Conferir a associação:**
+   - Em **Instâncias**, abra a instância e verifique se o campo **Endereço IPv4 público** agora mostra o IP elástico.
+   - A partir daqui, use **este IP** no lugar de `IP_PUBLICO` nos comandos de SSH.
+
+5. **Liberar a porta no Security Group (se ainda não estiver):**
+   - Na instância, aba **Segurança** → clique no *Security Group* → **Editar regras de entrada**.
+   - Garanta uma regra **SSH (TCP 22)** para o seu IP (ou para o IP da equipe).
+
+6. **Testar o acesso com o novo IP:**
+   ```bash
+   ssh -i "CAMINHO_DA_CHAVE.pem" ubuntu@IP_ELASTICO
+   ```
+
+> ⚠️ **Atenção:** o IP Elástico é gratuito **somente enquanto estiver associado a uma instância em execução**. Se ele ficar alocado sem uso (ou a instância estiver parada), a AWS cobra por hora. Se for desativar o ambiente, vá em **Ações** → **Desassociar endereço IP elástico** e depois **Liberar endereços IP elásticos** (*Release*).
+
+---
+
+
+## 🛠️ PARTE 2: Acesso e Política de Usuários
 
 Conecte-se à VM EC2 via SSH e crie os usuários da equipe de forma automatizada.
 
@@ -50,7 +88,7 @@ Conecte-se à VM EC2 via SSH e crie os usuários da equipe de forma automatizada
 
 ---
 
-## ☁️ PARTE 1: AWS CLI e Buckets (Data Lake)
+## ☁️ PARTE 3: AWS CLI e Buckets (Data Lake)
 
 O script abaixo já instala dependências (Python, OpenJDK 21), configura o AWS CLI e cria toda a estrutura do S3.
 
@@ -75,7 +113,7 @@ O script abaixo já instala dependências (Python, OpenJDK 21), configura o AWS 
 
 ---
 
-## 🐳 PARTE 2: Docker e MySQL
+## 🐳 PARTE 4: Docker e MySQL
 
 1. **Instalar o Docker:**
    ```bash
@@ -126,7 +164,7 @@ O script abaixo já instala dependências (Python, OpenJDK 21), configura o AWS 
    ```
    
 ---
-## 🔐 Parte 3: Segurança na porta MyQL na AWS
+## 🔐 Parte 5: Segurança na porta MyQL na AWS
 ---
 
 Como a porta **3306** estará publicada nas interfaces de rede da VM, restrinja o acesso usando a **Security Group da VM** que hospeda o MySQL.
@@ -142,10 +180,10 @@ Como a porta **3306** estará publicada nas interfaces de rede da VM, restrinja 
 * Em **Origem** coloque o IP publico da máquina que deseja acessar o banco e **"/32"** no final (ex: 127.0.0.1/32).
 * Clique em **"Salvar regras"** e pronto!
 
-Caso seu SO seja Windows, faça a "PARTE 3.1". Se for Linux, faça a "PARTE 3.2".
+Caso seu SO seja Windows, faça a "PARTE 6.1". Se for Linux, faça a "PARTE 6.2".
 
 ---
-## 💻 PARTE 3.1: Coletor de Métricas (Windows)
+## 💻 PARTE 6.1: Coletor de Métricas (Windows)
 
 No seu computador local simulando os servidores (**PowerShell**, dentro da pasta do projeto, onde estão o `Script_Extracao.py` e o `Organizador.py`).
 
@@ -289,7 +327,7 @@ python Script_Extracao.py
 Faça login com o e-mail e a senha do sistema e informe o token do servidor. O CSV é enviado ao S3 a cada 15 minutos; ao apertar `Ctrl+C`, o coletor envia o que estiver pendente e encerra. Deve aparecer `CSV enviado para s3://...`.
 
 ---
-### 💻 PARTE 3.2: Coletor de Métricas (Linux/Ubuntu)
+### 💻 PARTE 6.2: Coletor de Métricas (Linux/Ubuntu)
 ---
 
 No seu computador local simulando os servidores (**Terminal**):
@@ -327,7 +365,7 @@ tmux attach -t montech
 
 ---
 
-## 🔄 PARTE 4: Executando o ETL na VM
+## 🔄 PARTE 7: Executando o ETL na VM
 
 1. **Preparar o ambiente Python na VM:**
    ```bash
@@ -370,7 +408,7 @@ tmux attach -t montech
 
 ---
 
-## ⏱️ PARTE 5: Agendamento Automático (cron)
+## ⏱️ PARTE 8: Agendamento Automático (cron)
 
 1. **Criar o script de execução segura com `flock`:**
    ```bash
@@ -391,7 +429,7 @@ tmux attach -t montech
 
 ---
 
-## 🔧 PARTE 6: Manutenção e Erros Comuns
+## 🔧 PARTE 9: Manutenção e Erros Comuns
 
 * **Renovar credenciais AWS expiradas na VM:**
   ```bash
