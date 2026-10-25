@@ -142,57 +142,151 @@ Como a porta **3306** estará publicada nas interfaces de rede da VM, restrinja 
 * Em **Origem** coloque o IP publico da máquina que deseja acessar o banco e **"/32"** no final (ex: 127.0.0.1/32).
 * Clique em **"Salvar regras"** e pronto!
 
+Caso seu SO seja Windows, faça a "PARTE 3.1". Se for Linux, faça a "PARTE 3.2".
+
 ---
-### 💻 PARTE 3.1: Coletor de Métricas (Windows)
+## 💻 PARTE 3.1: Coletor de Métricas (Windows)
+
+No seu computador local simulando os servidores (**PowerShell**, dentro da pasta do projeto, onde estão o `Script_Extracao.py` e o `Organizador.py`).
+
+Esta parte faz, na mão, o mesmo que o `instalar-coletor.sh` faz no Linux: prepara o Python, configura o bucket, o banco e as credenciais AWS, e **valida tudo antes de coletar**.
+
+> **Antes de começar, tenha em mãos:** o nome do bucket (`montech-datalake-XXXX`), o IP público da EC2, a senha do usuário `montech` do MySQL e as 3 credenciais da AWS (Access Key, Secret Key e Session Token, todas da **mesma sessão** do laboratório).
+
 ---
 
-No seu computador local simulando os servidores (**PowerShell**):
+### 1. Criar o ambiente virtual e instalar as dependências
 
-1. **Criar o ambiente virtual e instalar as dependências:**
-   ```powershell
-   python -m venv venv
-   .\venv\Scripts\Activate
-   python -m pip install pandas psutil boto3 mysql-connector-python python-dotenv
-   ```
+```powershell
+python --version
+python -m venv venv
+.\venv\Scripts\Activate
+python -m pip install pandas psutil boto3 mysql-connector-python python-dotenv
+```
 
-2. **Configurar as credenciais da AWS:**
-   ```powershell
-   New-Item -ItemType Directory -Force "$env:USERPROFILE\.aws" | Out-Null
-   notepad "$env:USERPROFILE\.aws\credentials"
-   ```
-   Cole o seguinte conteúdo e salve:
-   ```ini
-   [default]
-   aws_access_key_id=COLE_ACCESS_KEY
-   aws_secret_access_key=COLE_SECRET_KEY
-   aws_session_token=COLE_SESSION_TOKEN
-   ```
+Valide (deve imprimir `Dependencias OK`; precisa ser Python **3.9 ou superior**):
 
-3. **Configurar o `.env` do projeto local:**
-   Na mesma pasta do projeto, crie um arquivo chamado `.env`:
-   ```env
-   DB_HOST=127.0.0.1
-   DB_USER=montech
-   DB_PASSWORD=SENHA_MONTECH
-   DB_NAME=montech
-   ```
+```powershell
+python -c "import pandas, psutil, boto3, mysql.connector, dotenv; print('Dependencias OK')"
+```
 
-4. **Abrir o túnel SSH (em outra janela do PowerShell e deixá-la aberta):**
-   ```powershell
-   ssh -i "CAMINHO_DA_CHAVE.pem" -L 3307:127.0.0.1:3306 ubuntu@IP_PUBLICO
-   ```
-   *Abra outro terminal no mesmo diretório sem fechar esse da conexão SSH.*
-   *Teste a conexão na janela principal:*
-   ```powershell
-   Test-NetConnection 127.0.0.1 -Port 3307
-   ```
+> Se o `Activate` der o erro *"a execução de scripts foi desabilitada neste sistema"*, rode `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` (vale só para esta janela) e ative de novo. O prompt deve passar a começar com `(venv)`.
 
-5. **Executar o Coletor:**
-*No mesmo terminal que você rodou o teste acima*
-   ```powershell
-   python -m py_compile Script_Extracao.py Organizador.py
-   python Script_Extracao.py
-   ```
+---
+
+### 2. Configurar o bucket e a região no código
+
+Abra o `Script_Extracao.py` (de preferência no VS Code: `code Script_Extracao.py`; no Bloco de Notas, use `Ctrl+F` e procure `NOME_BUCKET`):
+
+- **Linha 36:** troque o nome pelo do seu bucket: `NOME_BUCKET = "montech-datalake-XXXX"`
+- **Linha 39:** confira a região: `REGIAO_AWS = "us-east-1"` (nunca `us-east-1d`, que é zona de disponibilidade)
+
+Salve o arquivo em **UTF-8** e confirme que as duas linhas ficaram certas:
+
+```powershell
+Select-String -Path Script_Extracao.py -Pattern '^(NOME_BUCKET|REGIAO_AWS) ='
+```
+
+---
+
+### 3. Acesso ao MySQL e arquivo `.env`
+
+Escolha **A** ou **B**, conforme a EC2.
+
+**A. Conexão direta (recomendado)** — quando o container do MySQL publica a porta (`-p 3306:3306`) e o Security Group da EC2 libera **TCP 3306** para o seu IP público.
+
+Descubra o seu IP público (é ele que vai no Security Group, no formato `IP/32`; não use o `192.168.x.x`):
+
+```powershell
+(Invoke-RestMethod https://checkip.amazonaws.com).Trim()
+```
+
+Teste a rede (deve mostrar `TcpTestSucceeded : True`):
+
+```powershell
+Test-NetConnection IP_PUBLICO -Port 3306
+```
+
+**B. Túnel SSH** — só se a porta 3306 da EC2 **não** estiver aberta. Em **outra janela do PowerShell**, rode e deixe aberta:
+
+```powershell
+ssh -i "CAMINHO_DA_CHAVE.pem" -L 3306:127.0.0.1:3306 ubuntu@IP_PUBLICO
+```
+
+Na janela principal, teste (deve mostrar `TcpTestSucceeded : True`):
+
+```powershell
+Test-NetConnection 127.0.0.1 -Port 3306
+```
+
+> ⚠️ O túnel precisa usar a porta local **3306** (não 3307), porque o coletor não lê `DB_PORT` e sempre conecta na 3306. Se houver um MySQL instalado no Windows ocupando a 3306, pare-o antes.
+
+Crie o `.env` na pasta do projeto (troque `IP_PUBLICO` e `SENHA_MONTECH`; na opção **B**, use `DB_HOST=127.0.0.1`):
+
+```powershell
+@'
+DB_HOST=IP_PUBLICO
+DB_USER=montech
+DB_PASSWORD=SENHA_MONTECH
+DB_NAME=montech
+'@ | Set-Content -Path .env -Encoding ascii
+```
+
+Confira (a senha aparece mascarada):
+
+```powershell
+(Get-Content .env) -replace '(?<=^DB_PASSWORD=).*', '***'
+```
+
+> Use uma senha só com caracteres ASCII, sem espaços, aspas, `#` ou a sequência `${`: o `.env` não as interpreta corretamente. Sem espaços ao redor do `=`.
+
+---
+
+### 4. Configurar as credenciais da AWS
+
+Antes, limpe variáveis `AWS_*` que possam estar sobrescrevendo o arquivo (causa comum de `InvalidToken`):
+
+```powershell
+Get-ChildItem Env:AWS*
+Remove-Item Env:AWS_ACCESS_KEY_ID, Env:AWS_SECRET_ACCESS_KEY, Env:AWS_SESSION_TOKEN, Env:AWS_PROFILE -ErrorAction SilentlyContinue
+```
+
+Crie o arquivo de credenciais:
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.aws" | Out-Null
+notepad "$env:USERPROFILE\.aws\credentials"
+```
+
+Cole o seguinte conteúdo (os 3 valores inteiros, sem espaços nem quebras de linha) e salve:
+
+```
+[default]
+aws_access_key_id=COLE_ACCESS_KEY
+aws_secret_access_key=COLE_SECRET_KEY
+aws_session_token=COLE_SESSION_TOKEN
+```
+
+Confira se o arquivo ficou com as 4 linhas (valores mascarados):
+
+```powershell
+(Get-Content "$env:USERPROFILE\.aws\credentials") -replace '(?<==).+', '***'
+```
+
+> As credenciais do laboratório expiram (cerca de 4 horas) e mudam a cada nova sessão. Quando isso acontecer, repita este passo e o 5.
+
+---
+
+### 5. Executar o Coletor
+
+No mesmo terminal onde você rodou as validações (com o `(venv)` ativo):
+
+```powershell
+python -m py_compile Script_Extracao.py Organizador.py
+python Script_Extracao.py
+```
+
+Faça login com o e-mail e a senha do sistema e informe o token do servidor. O CSV é enviado ao S3 a cada 15 minutos; ao apertar `Ctrl+C`, o coletor envia o que estiver pendente e encerra. Deve aparecer `CSV enviado para s3://...`.
 
 ---
 ### 💻 PARTE 3.2: Coletor de Métricas (Linux/Ubuntu)
