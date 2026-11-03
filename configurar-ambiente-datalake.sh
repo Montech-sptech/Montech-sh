@@ -135,6 +135,20 @@ read -r -s -p "Senha root do MySQL [suaSenhaForte]: " MYSQL_ROOT_PASSWORD
 echo ""
 MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-suaSenhaForte}
 
+# Usuário adicional (sem privilégios de root) com acesso ao banco montech
+read -r -p "Nome do usuário adicional do MySQL [montech]: " MYSQL_USER
+MYSQL_USER=${MYSQL_USER:-montech}
+while [ "$MYSQL_USER" = "root" ]; do
+    read -r -p "O nome 'root' já existe. Escolha outro nome de usuário: " MYSQL_USER
+done
+
+MYSQL_PASSWORD=""
+while [ -z "$MYSQL_PASSWORD" ]; do
+    read -r -s -p "Senha do usuário '$MYSQL_USER': " MYSQL_PASSWORD
+    echo ""
+    [ -z "$MYSQL_PASSWORD" ] && echo -e "${AMARELO}A senha não pode ser vazia.${RESET}"
+done
+
 # Cria a pasta do banco com o montech.sql e o Dockerfile
 preparar_arquivos_banco() {
     set -e
@@ -261,24 +275,18 @@ CREATE TABLE chamado (
   titulo VARCHAR(200) NOT NULL,
   descricao VARCHAR(255) NOT NULL,
   statusChamado ENUM('ABERTO', 'ATENCAO', 'CRITICO', 'FECHADO') NOT NULL DEFAULT 'ABERTO',
+  linkJira VARCHAR(500) NOT NULL,
   dt_inicio DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   dt_fim DATETIME,
-  fkServidor INT NOT NULL,
-  PRIMARY KEY (idChamado, fkServidor),
+  fkServidorComponente INT NOT NULL,
+  PRIMARY KEY (idChamado, fkServidorComponente),
+  CONSTRAINT fk_chamado_servidorcomponente FOREIGN KEY (fkServidorComponente)
+    REFERENCES servidorcomponente (idServidorComponente),
   CONSTRAINT ck_chamado_datas CHECK (
     dt_fim IS NULL OR dt_fim >= dt_inicio
   )
 );
 
-CREATE TABLE servidorComponenteChamado (
-  fkServidorComponente INT NOT NULL,
-  fkChamado INT NOT NULL,
-  PRIMARY KEY (fkServidorComponente, fkChamado),
-  CONSTRAINT fk_servidorcomponentechamado_servidorcomponente FOREIGN KEY (fkServidorComponente)
-    REFERENCES servidorcomponente (idServidorComponente),
-  CONSTRAINT fk_servidorcomponentechamado_chamado FOREIGN KEY (fkChamado)
-    REFERENCES chamado (idChamado)
-);
 
 CREATE TABLE cargopermissao (
   idCargoPermissao INT NOT NULL AUTO_INCREMENT,
@@ -479,6 +487,8 @@ subir_banco_docker() {
     sudo docker rm -f "$DB_CONTAINER" > /dev/null 2>&1 || true
     sudo docker run -d --name "$DB_CONTAINER" \
       -e MYSQL_ROOT_PASSWORD="$MYSQL_ROOT_PASSWORD" \
+      -e MYSQL_USER="$MYSQL_USER" \
+      -e MYSQL_PASSWORD="$MYSQL_PASSWORD" \
       -p 3306:3306 \
       -v montech_data:/var/lib/mysql \
       "$DB_IMAGE"
@@ -579,5 +589,6 @@ echo "Camada Silver S3 : $SILVER_PATH (Espera CSV)"
 echo "Camada Gold S3   : $GOLD_PATH (Espera JSON)"
 echo "Pasta local EC2  : $LOCAL_CSV_DIR"
 echo "Banco MySQL      : container $DB_CONTAINER (porta 3306, volume montech_data)"
+echo "Usuário MySQL     : $MYSQL_USER (acesso ao banco montech) e root"
 echo "========================================================"
 echo "Para verificar tudo na AWS, rode: aws s3 ls s3://${BUCKET_NAME} --recursive"
