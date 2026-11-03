@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
 # Script de automação e configuração do ambiente e Data Lake (AWS S3) - MonTech
+# Usa o IAM Instance Profile da EC2 (LabInstanceProfile): não pede credenciais.
 #
 
 # Garante que o cursor volte a ficar visível caso o script seja interrompido
@@ -94,29 +95,38 @@ echo "      CONFIGURAÇÃO BUCKETS AWS - MONTECH         "
 echo "================================================="
 echo ""
 
-# 1. Coleta de credenciais de forma interativa
-read -p "AWS Access Key ID: " AWS_ACCESS_KEY
-read -p "AWS Secret Access Key: " AWS_SECRET_KEY
-read -p "AWS Session Token: " AWS_SESSION_TOKEN
+# 1. Autenticação via IAM Instance Profile (LabInstanceProfile)
+#    Nenhuma credencial é digitada: o AWS CLI obtém chaves temporárias
+#    automaticamente pelo serviço de metadados da instância (IMDS).
+echo -e "${AZUL}Autenticação:${RESET} usando o IAM Instance Profile da EC2 (LabInstanceProfile)"
+
+# Credenciais explícitas têm prioridade sobre o Instance Profile e, se estiverem
+# velhas/expiradas, quebram tudo. Por isso garantimos que não há nenhuma em uso.
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
+
+if [ -f "$HOME/.aws/credentials" ]; then
+    BACKUP_CRED="$HOME/.aws/credentials.bak.$(date +%Y%m%d%H%M%S)"
+    mv "$HOME/.aws/credentials" "$BACKUP_CRED"
+    echo -e "${AMARELO}Aviso:${RESET} arquivo ~/.aws/credentials antigo movido para $BACKUP_CRED"
+fi
+
+# 2. Região e formato de saída (não são segredos, então podem ser configurados)
 read -p "Default region name [us-east-1]: " AWS_REGION
 AWS_REGION=${AWS_REGION:-us-east-1}
-read -p "Default output format [json]: " AWS_OUTPUT
-AWS_OUTPUT=${AWS_OUTPUT:-json}
+export AWS_DEFAULT_REGION="$AWS_REGION"
 
-echo ""
-echo "--- Configuração da Estrutura do Data Lake ---"
+executar_com_spinner "Configurando região e formato de saída do AWS CLI..." \
+    "aws configure set region '$AWS_REGION' && aws configure set output json"
 
-# 2. Configuração do AWS CLI
-executar_com_spinner "Configurando o AWS CLI..." \
-    "aws configure set aws_access_key_id '$AWS_ACCESS_KEY' && aws configure set aws_secret_access_key '$AWS_SECRET_KEY' && aws configure set aws_session_token '$AWS_SESSION_TOKEN' && aws configure set region '$AWS_REGION' && aws configure set output '$AWS_OUTPUT'"
-
-# 3. Teste de conexão
-executar_com_spinner "Validando credenciais na AWS..." "aws sts get-caller-identity"
+# 3. Teste de conexão (valida se o Instance Profile está anexado à EC2)
+executar_com_spinner "Validando Instance Profile na AWS..." "aws sts get-caller-identity"
 if [ $? -ne 0 ]; then
-    echo -e "${VERMELHO}ERRO: Credenciais inválidas ou token expirado. Rode o script novamente com as credenciais corretas.${RESET}"
+    echo -e "${VERMELHO}ERRO: não foi possível obter credenciais do Instance Profile.${RESET}"
+    echo -e "${AMARELO}Verifique no console EC2: Actions > Security > Modify IAM role > LabInstanceProfile.${RESET}"
     exit 1
 fi
 echo -e "${VERDE}Conexão com a AWS estabelecida com sucesso!${RESET}"
+echo -e "${AZUL}Identidade:${RESET} $(aws sts get-caller-identity --query Arn --output text)"
 
 # 4. Variáveis de Ambiente e Particionamento
 # Sufixo aleatório obrigatório porque nomes de buckets S3 devem ser globais e únicos
@@ -133,6 +143,10 @@ LOCAL_CSV_DIR="${LOCAL_BASE_DIR}"
 
 # 5. Criando Bucket e Pastas (Prefixos) na AWS
 executar_com_spinner "Criando o Bucket S3 ($BUCKET_NAME)..." "aws s3 mb 's3://${BUCKET_NAME}'"
+if [ $? -ne 0 ]; then
+    echo -e "${VERMELHO}ERRO: falha ao criar o bucket. Confira se o perfil da instância tem permissão de S3.${RESET}"
+    exit 1
+fi
 
 executar_com_spinner "Criando as camadas Bronze, Silver e Gold no S3..." \
     "aws s3api put-object --bucket '$BUCKET_NAME' --key '01-bronze/' && aws s3api put-object --bucket '$BUCKET_NAME' --key '02-silver/' && aws s3api put-object --bucket '$BUCKET_NAME' --key '03-gold/'"
