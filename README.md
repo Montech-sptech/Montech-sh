@@ -343,7 +343,7 @@ Colar o script `instalar-captura.sh`.
 chmod +x ~/instalar-captura.sh
 ~/instalar-captura.sh
 ```
-Nota: O script solicitará o nome do Bucket `montech-datalake-2014`, a região, o IP público do servidor `18.212.230.200`, porta do MySQL `3306`, usuário do banco `montech`, nome do database `montech` e suas credenciais da AWS (`Access Key`, `Secret Key`, `Session Token`).
+Nota: O script solicitará o nome do Bucket `montech-datalake-2014`, a região, o IP público do servidor `18.212.230.200`, usuário do banco `montech`, nome do database `montech` e suas credenciais da AWS (`Access Key`, `Secret Key`, `Session Token`).
 
 3. Rodando o Script de Captura:
 ```bash
@@ -423,7 +423,7 @@ tmux attach -t montech
 
 2. **Agendar no cron (a cada 15 minutos):**
    ```bash
-   (crontab -l 2>/dev/null | grep -v 'etl_1.py' | grep -v 'run_etl.sh'; echo '*/15 * * * * /home/ubuntu/montech-etl/run_etl.sh') > /tmp/cron_montech
+   (crontab -l 2>/dev/null | grep -v 'etl_1.py' | grep -v 'run_etl.sh'; echo '* * * * * /home/ubuntu/montech-etl/run_etl.sh') > /tmp/cron_montech
    crontab /tmp/cron_montech
    ```
 
