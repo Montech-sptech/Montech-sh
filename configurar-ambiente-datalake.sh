@@ -60,6 +60,37 @@ executar_com_spinner() {
     fi
 }
 
+# Função que instala o Docker Engine pelo repositório oficial (Ubuntu)
+# Chamada via executar_com_spinner (roda em subshell, por isso usa && para encadear)
+instalar_docker() {
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Chave GPG oficial do Docker
+    sudo apt-get update -y &&
+    sudo apt-get install -y ca-certificates curl &&
+    sudo install -m 0755 -d /etc/apt/keyrings &&
+    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc &&
+    sudo chmod a+r /etc/apt/keyrings/docker.asc &&
+
+    # Repositório do Docker nas fontes do Apt
+    sudo tee /etc/apt/sources.list.d/docker.sources > /dev/null <<EOF &&
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+
+    sudo apt-get update -y &&
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin &&
+
+    # Pós-instalação: iniciar, habilitar no boot e permitir uso sem sudo
+    sudo systemctl start docker.service &&
+    sudo systemctl enable docker.service &&
+    sudo usermod -aG docker ubuntu
+}
+
 echo "================================================="
 echo "      CONFIGURANDO AMBIENTE - MONTECH         "
 echo "================================================="
@@ -79,6 +110,18 @@ executar_com_spinner "Instalando OpenJDK 21..." \
 
 if command -v java &>/dev/null; then
     echo -e "${AZUL}Versão Java instalada:${RESET} $(java -version 2>&1 | head -n 1)"
+fi
+
+# Instala o Docker apenas se ainda não existir
+if command -v docker &>/dev/null; then
+    echo -e "${AMARELO}Docker já instalado, pulando instalação.${RESET}"
+else
+    executar_com_spinner "Instalando Docker Engine, Buildx e Compose..." "instalar_docker"
+fi
+
+if command -v docker &>/dev/null; then
+    echo -e "${AZUL}Versão Docker instalada:${RESET} $(docker --version)"
+    echo -e "${AZUL}Versão Docker Compose:${RESET} $(docker compose version 2>/dev/null)"
 fi
 
 # Instala o AWS CLI v2 apenas se ainda não existir
@@ -163,3 +206,5 @@ echo "Camada Gold S3   : $GOLD_PATH (Espera JSON)"
 echo "Pasta local EC2  : $LOCAL_CSV_DIR"
 echo "========================================================"
 echo "Para verificar tudo na AWS, rode: aws s3 ls s3://${BUCKET_NAME} --recursive"
+echo ""
+echo -e "${AMARELO}Docker: para usar 'docker' sem sudo, saia e entre novamente na sessão (ou rode: newgrp docker).${RESET}"
