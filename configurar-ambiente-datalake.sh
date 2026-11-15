@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
 # Script de automação e configuração do ambiente e Data Lake (AWS S3) - MonTech
+# Credenciais AWS: obtidas automaticamente via LabInstanceProfile (role da EC2)
 #
 
 # Garante que o cursor volte a ficar visível caso o script seja interrompido
@@ -26,7 +27,6 @@ executar_com_spinner() {
     ( eval "$comando" ) > "$log_temp" 2>&1 &
     local pid=$!
 
-    # Caracteres da animação (barra invertida, barra reta, traço, barra comum)
     local spin_chars=('|' '/' '-' '\')
     local i=0
     local delay=0.1
@@ -81,8 +81,13 @@ if command -v java &>/dev/null; then
     echo -e "${AZUL}Versão Java instalada:${RESET} $(java -version 2>&1 | head -n 1)"
 fi
 
-executar_com_spinner "Instalando AWS CLI v2..." \
-    "curl -fsSL 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o 'awscliv2.zip' && unzip -qo awscliv2.zip && sudo ./aws/install --update && rm -rf aws awscliv2.zip"
+# Instala o AWS CLI v2 apenas se ainda não existir
+if command -v aws &>/dev/null; then
+    echo -e "${AMARELO}AWS CLI já instalado, pulando instalação.${RESET}"
+else
+    executar_com_spinner "Instalando AWS CLI v2..." \
+        "curl -fsSL 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o 'awscliv2.zip' && unzip -qo awscliv2.zip && sudo ./aws/install --update && rm -rf aws awscliv2.zip"
+fi
 
 if command -v aws &>/dev/null; then
     echo -e "${AZUL}Versão instalada:${RESET} $(aws --version)"
@@ -94,29 +99,36 @@ echo "      CONFIGURAÇÃO BUCKETS AWS - MONTECH         "
 echo "================================================="
 echo ""
 
-# 1. Coleta de credenciais de forma interativa
-read -p "AWS Access Key ID: " AWS_ACCESS_KEY
-read -p "AWS Secret Access Key: " AWS_SECRET_KEY
-read -p "AWS Session Token: " AWS_SESSION_TOKEN
+# 1. Credenciais: vêm do LabInstanceProfile (metadados da EC2).
+#    Remove variáveis/arquivos de credenciais estáticas que poderiam
+#    sobrescrever a role da instância.
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_PROFILE
+if [ -f "$HOME/.aws/credentials" ]; then
+    echo -e "${AMARELO}Aviso: ~/.aws/credentials encontrado; movendo para backup para usar o LabInstanceProfile.${RESET}"
+    mv "$HOME/.aws/credentials" "$HOME/.aws/credentials.bak.$(date +%s)"
+fi
+
+# Região (a role não define região; o padrão do Learner Lab é us-east-1)
 read -p "Default region name [us-east-1]: " AWS_REGION
 AWS_REGION=${AWS_REGION:-us-east-1}
-read -p "Default output format [json]: " AWS_OUTPUT
-AWS_OUTPUT=${AWS_OUTPUT:-json}
+export AWS_DEFAULT_REGION="$AWS_REGION"
 
 echo ""
 echo "--- Configuração da Estrutura do Data Lake ---"
 
-# 2. Configuração do AWS CLI
-executar_com_spinner "Configurando o AWS CLI..." \
-    "aws configure set aws_access_key_id '$AWS_ACCESS_KEY' && aws configure set aws_secret_access_key '$AWS_SECRET_KEY' && aws configure set aws_session_token '$AWS_SESSION_TOKEN' && aws configure set region '$AWS_REGION' && aws configure set output '$AWS_OUTPUT'"
+# 2. Configuração do AWS CLI (somente região e formato; sem credenciais)
+executar_com_spinner "Configurando região e formato de saída do AWS CLI..." \
+    "aws configure set region '$AWS_REGION' && aws configure set output 'json'"
 
-# 3. Teste de conexão
-executar_com_spinner "Validando credenciais na AWS..." "aws sts get-caller-identity"
+# 3. Teste de conexão usando a role da instância
+executar_com_spinner "Validando credenciais do LabInstanceProfile..." "aws sts get-caller-identity"
 if [ $? -ne 0 ]; then
-    echo -e "${VERMELHO}ERRO: Credenciais inválidas ou token expirado. Rode o script novamente com as credenciais corretas.${RESET}"
+    echo -e "${VERMELHO}ERRO: Não foi possível obter credenciais da instância.${RESET}"
+    echo -e "${VERMELHO}Verifique se a EC2 está com o IAM Instance Profile 'LabInstanceProfile' anexado.${RESET}"
     exit 1
 fi
-echo -e "${VERDE}Conexão com a AWS estabelecida com sucesso!${RESET}"
+echo -e "${VERDE}Conexão com a AWS estabelecida com sucesso via LabInstanceProfile!${RESET}"
+aws sts get-caller-identity --query Arn --output text
 
 # 4. Variáveis de Ambiente e Particionamento
 # Sufixo aleatório obrigatório porque nomes de buckets S3 devem ser globais e únicos
@@ -132,7 +144,7 @@ LOCAL_BASE_DIR="/home/ubuntu/datalake_data"
 LOCAL_CSV_DIR="${LOCAL_BASE_DIR}"
 
 # 5. Criando Bucket e Pastas (Prefixos) na AWS
-executar_com_spinner "Criando o Bucket S3 ($BUCKET_NAME)..." "aws s3 mb 's3://${BUCKET_NAME}'"
+executar_com_spinner "Criando o Bucket S3 ($BUCKET_NAME)..." "aws s3 mb 's3://${BUCKET_NAME}' --region '$AWS_REGION'"
 
 executar_com_spinner "Criando as camadas Bronze, Silver e Gold no S3..." \
     "aws s3api put-object --bucket '$BUCKET_NAME' --key '01-bronze/' && aws s3api put-object --bucket '$BUCKET_NAME' --key '02-silver/' && aws s3api put-object --bucket '$BUCKET_NAME' --key '03-gold/'"
