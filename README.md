@@ -407,270 +407,156 @@ tmux attach -t montech
 
 ---
 
-## 7. Dependências e função AWS Lambda
-
-### 7.1 Construir a layer de pandas e NumPy — terminal da EC2
-
-O runtime da função será Python 3.14 x86_64. A layer precisa ser compatível com esse Python e com Linux; não compacte as bibliotecas instaladas no Windows.
-
+## 7. Dependências e funções AWS Lambda
+ 
+O projeto usa **três funções Lambda**, cada uma com uma responsabilidade:
+ 
+| Função | Arquivo do repositório | Quem aciona | Lê | Grava |
+|---|---|---|---|---|
+| `montech-ingest` | `lambda_ingest.py` | Function URL (HTTP `POST` do coletor) | corpo da requisição | `01-bronze/*` |
+| `montech-bronze2silver` | `lambda_bronze2silver.py` | Evento S3 em `01-bronze/` | `01-bronze/*` | `02-silver/*` |
+| `montech-silver2gold` | `lambda_silver2gold.py` | Evento S3 em `02-silver/` | `02-silver/*` | `03-gold/*` |
+ 
+Fluxo completo:
+ 
+```
+Script_Extracao.py --POST text/csv--> montech-ingest (Function URL) --> 01-bronze/
+   --> montech-bronze2silver --> 02-silver/ --> montech-silver2gold --> 03-gold/
+```
+ 
+O coletor **não usa credenciais AWS**: ele só precisa da URL da `montech-ingest`.
+ 
+### 7.1 Layer (pandas / NumPy) — só para a `montech-silver2gold`
+ 
+A `montech-silver2gold` usa pandas/NumPy. As outras duas funções não precisam de layer.
+ 
+- **Recomendado:** Lambda Layer com `python/` contendo pandas e numpy compilados para Linux x86_64.
+- **Alternativa (menos recomendada):** empacotar as dependências no ZIP da função (fica grande). Não copie pacotes instalados no Windows; gere em Linux ou Docker.
+Build via Docker:
+ 
 ```bash
-sudo apt update
-sudo apt install -y docker.io zip
-sudo systemctl enable --now docker
-docker --version
-uname -m
 mkdir -p ~/montech-lambda-layer/python
-cd ~/montech-lambda-layer
-```
-
-Em uma pasta `python/` nova, instale as versões usadas na validação:
-
-```bash
-sudo docker run --rm \
-  --platform linux/amd64 \
-  --entrypoint /bin/sh \
-  -v "$HOME/montech-lambda-layer:/var/task" \
-  public.ecr.aws/lambda/python:3.14 \
-  -c 'python -m pip install --only-binary=:all: pandas==3.1.1 numpy==2.5.4 -t /var/task/python'
-```
-
-Valide as importações no mesmo ambiente:
-
-```bash
-sudo docker run --rm \
-  --platform linux/amd64 \
-  --entrypoint /bin/sh \
-  -v "$HOME/montech-lambda-layer:/var/task" \
-  public.ecr.aws/lambda/python:3.14 \
-  -c 'PYTHONPATH=/var/task/python python -c "import pandas, numpy; print(\"pandas:\", pandas.__version__); print(\"numpy:\", numpy.__version__)"'
-```
-
-Compacte e envie ao seu bucket:
-
-```bash
+docker run --rm -v "$HOME/montech-lambda-layer:/var/task" public.ecr.aws/lambda/python:3.14 \
+  /bin/sh -c 'python -m pip install pandas numpy -t /var/task/python'
 cd ~/montech-lambda-layer
 zip -qr montech-pandas-py314.zip python
-ls -lh montech-pandas-py314.zip
-aws sts get-caller-identity --region us-east-1
-aws s3 cp montech-pandas-py314.zip s3://SEU_BUCKET/dependencias/montech-pandas-py314.zip --region us-east-1
+aws s3 cp montech-pandas-py314.zip s3://SEU_BUCKET/dependencias/ --region us-east-1
 ```
-
-Troque `SEU_BUCKET`. O ZIP precisa ter `python/` na raiz. O arquivo da validação tinha aproximadamente 45 MB. O caminho `dependencias/` fica fora do gatilho.
-
-### 7.2 Criar e anexar a layer — console AWS
-
-Na região `us-east-1`:
-
-- **7.2.1** Abra Lambda → Camadas/Layers → Criar uma camada.
-- **7.2.2** Nome: `montech-pandas-py314`.
-- **7.2.3** Selecione criar a partir de um arquivo no Amazon S3.
-- **7.2.4** Informe `s3://SEU_BUCKET/dependencias/montech-pandas-py314.zip`, com seu bucket real.
-- **7.2.5** Arquitetura compatível: `x86_64`; runtime compatível: Python 3.14.
-- **7.2.6** Crie e anote a versão retornada.
-
-### 7.3 Criar a função — console AWS
-
-- **7.3.1** Lambda → Criar função → Criar do zero.
-- **7.3.2** Nome: `Montech-lambda`.
-- **7.3.3** Runtime/Tempo de execução: **Python 3.14**.
-- **7.3.4** Arquitetura: **x86_64**; não ative ARM64, execução durável ou provedor EC2.
-- **7.3.5** Em configurações adicionais, personalize o perfil/papel de execução e selecione **LabRole**, se for o papel autorizado no seu laboratório.
-- **7.3.6** Crie a função.
-- **7.3.7** Na aba Código, em Camadas, clique em Adicionar camada ou Editar; escolha a camada personalizada `montech-pandas-py314` e a versão criada. Confirme que a lista deixa de mostrar zero camadas.
-- **7.3.8** Configurações do runtime: manipulador **`lambda_function.lambda_handler`**.
-- **7.3.9** Configuração geral: memória **1024 MB**, timeout **2 minutos**.
-- **7.3.10** Configuração → Detecção de recursão e simultaneidade → Simultaneidade → Editar: configure **simultaneidade reservada = 1**. Não é simultaneidade provisionada. Mantenha a detecção de loops recursivos ativada.
-
-
-### 7.4 Publicar o código e configurar variáveis
-
-Na aba Código, substitua o conteúdo de `lambda_function.py` pelo **arquivo final incremental do repositório Python** e clique em **Deploy**. O código completo deve conter `processar_servidor`, suporte a eventos `Records` e ao teste manual com `bucket`/`chave`, e permitir os dois pares de prefixos abaixo tanto na validação de entrada quanto em `salvar_resultados`.
-
-Comece em Configuração → Variáveis de ambiente:
-
-| Chave (literal; não renomear) | Valor inicial |
-| --- | --- |
-| `NOME_BUCKET` | Nome real do bucket gerado na sua conta |
-| `PREFIXO_SILVER` | `testes-lambda/02-silver` |
-| `PREFIXO_GOLD` | `testes-lambda/03-gold` |
-
-A função final não precisa da layer de `psutil`, `mysql-connector-python` ou `python-dotenv`: essas dependências são da captura. O runtime fornece boto3; pandas/NumPy vêm da layer.
-
-## 8. Inicialização, gatilho e validação
-
-### 8.1 Decidir entre ambiente novo e migração
-
-**Ambiente novo, sem dados antigos:** configure e ative o gatilho antes da primeira captura. Não execute a ETL antiga. A primeira coleta cria sua Silver.
-
-**Já existem CSVs na bronze:** configure a função, mas mantenha a captura parada e o gatilho ainda ausente/desativado. Faça a carga inicial abaixo antes de receber dados novos. Simplesmente ativar o Lambda não processa uploads antigos.
-
-### 8.2 Carga inicial/reconstrução de histórico — somente quando necessária
-
-A função incremental usa a Silver existente como base. Para montar uma base de teste a partir da bronze, reenvie cada caminho à função em sequência, sem alterar os objetos Bronze. Isso também permite retomar uma carga interrompida: eventos repetidos não devem duplicar linhas.
-
-No PowerShell, na pasta do projeto Python, abra:
-
-```powershell
-notepad reconstruir_silver.py
-```
-
-Cole e salve:
-
-```python
-import json
-import boto3
-from botocore.config import Config
-
-BUCKET = "SEU_BUCKET"
-FUNCAO = "Montech-lambda"
-REGIAO = "us-east-1"
-
-s3 = boto3.client("s3", region_name=REGIAO)
-lambda_aws = boto3.client(
-    "lambda", region_name=REGIAO,
-    config=Config(read_timeout=150, connect_timeout=10),
-)
-
-# Lista antes de começar; não depende de uma única página do S3.
-chaves = []
-for pagina in s3.get_paginator("list_objects_v2").paginate(
-    Bucket=BUCKET, Prefix="01-bronze/"
-):
-    for objeto in pagina.get("Contents", []):
-        if objeto["Key"].endswith(".csv"):
-            chaves.append(objeto["Key"])
-
-print(f"CSVs encontrados: {len(chaves)}")
-for indice, chave in enumerate(sorted(chaves), start=1):
-    resposta = lambda_aws.invoke(
-        FunctionName=FUNCAO,
-        InvocationType="RequestResponse",
-        Payload=json.dumps({"bucket": BUCKET, "chave": chave}).encode("utf-8"),
-    )
-    corpo = resposta["Payload"]
-    try:
-        retorno = corpo.read().decode("utf-8")
-    finally:
-        corpo.close()
-    if resposta.get("FunctionError"):
-        raise RuntimeError(f"Falha em {chave}: {retorno}")
-    print(f"{indice}/{len(chaves)}: {chave}")
-```
-
-Troque `SEU_BUCKET`, confirme o nome da função, ative o venv da captura e execute:
-
-```powershell
-python reconstruir_silver.py
-```
-
-O script requer `lambda:InvokeFunction` para a identidade local, além de listagem da bronze. O cliente usa timeout de leitura de 150 segundos, maior que os 120 segundos configurados na função. Se o laboratório negar invocação pela API, não prossiga com uma Silver incompleta: use uma identidade autorizada ou o fluxo de invocação permitido no lab.
-
-Esta recuperação incorpora os registros à base existente. **Não remove dados antigos ou corrige CSVs sobrescritos**; reconstrução exata após exclusão/correção de fontes exige um novo par de prefixos autorizado no código e uma base vazia. Não apague Silver em uso. Mantenha a captura e o gatilho parados durante a carga inicial e a troca dos destinos.
-
-Na validação deste projeto, uma reconstrução com a versão anterior completa também foi usada para preparar a base. Para novas contas, o replay acima usa a versão final e não depende do limite antigo de 500 arquivos.
-
-### 8.3 Teste manual — console AWS
-
-Liste os caminhos reais no PowerShell ou na EC2:
-
+ 
+Depois: Console AWS → Lambda → Layers → Criar camada → faça upload do ZIP (ou aponte para o S3). Marque o runtime Python 3.14 e a arquitetura x86_64.
+ 
+### 7.2 Criar as funções
+ 
+Crie **na ordem abaixo** (região `us-east-1`). Em todas: Lambda → Criar função → Criar do zero, role do laboratório (`LabRole` ou a autorizada) e upload do arquivo `.py` do repositório.
+ 
+| | `montech-ingest` | `montech-bronze2silver` | `montech-silver2gold` |
+|---|---|---|---|
+| Handler | `lambda_ingest.lambda_handler` | `lambda_bronze2silver.lambda_handler` | `lambda_silver2gold.lambda_handler` |
+| Runtime | Python 3.12 ou 3.14 | Python 3.12 ou 3.14 | Python 3.14 (se a layer foi feita para 3.14) |
+| Arquitetura | x86_64 | x86_64 | x86_64 |
+| Memória | 256 MB | 1024 MB | 1024 MB |
+| Timeout | 30 s | 120 s | 120 s |
+| Permissão S3 | `PutObject` em `01-bronze/*` | `GetObject` em `01-bronze/*` e `PutObject` em `02-silver/*` | `GetObject` em `02-silver/*` e `PutObject` em `03-gold/*` |
+| Extras | Function URL (seção 7.3) | — | Layer pandas/NumPy e **simultaneidade reservada = 1** |
+ 
+> Simultaneidade reservada da `montech-silver2gold` (Configuration → Concurrency → Reserved concurrency = 1): evita sobrescrita concorrente dos arquivos diários.
+ 
+### 7.3 Código-fonte das funções (`functions_lambda.zip`)
+ 
+O repositório Python tem o arquivo **`functions_lambda.zip`**, que contém todos os arquivos das três Lambdas. Ele é o mesmo para as três funções; o que define qual código roda em cada uma é o **handler**. Repita o passo abaixo em `montech-ingest`, `montech-bronze2silver` e `montech-silver2gold`:
+ 
+1. Abra a função e vá na aba **Code** (Código).
+2. Em **Code source**, clique em **Upload from** (botão de upload) e escolha **.zip file**.
+3. Clique em **Upload**, selecione o `functions_lambda.zip` do repositório e confirme em **Save**.
+4. Ainda na aba **Code**, role até **Runtime settings** → **Edit** e confira o **Handler** da função:
+| Função | Handler |
+|---|---|
+| `montech-ingest` | `lambda_ingest.lambda_handler` |
+| `montech-bronze2silver` | `lambda_bronze2silver.lambda_handler` |
+| `montech-silver2gold` | `lambda_silver2gold.lambda_handler` |
+ 
+5. Confirme que os arquivos `.py` aparecem na raiz do editor de código (sem pasta intermediária). Se aparecerem dentro de uma pasta, o handler não será encontrado.
+> Sempre que o código mudar no repositório, gere o ZIP novamente e repita os passos 1 a 3 nas três funções.
+ 
+### 7.4 Function URL da `montech-ingest`
+ 
+A `montech-ingest` é a única exposta por HTTP: recebe o CSV por `POST`, valida o caminho de `?filename=` e grava o objeto em `01-bronze/`.
+ 
+1. Na função: **Configuração → URL da função → Criar URL da função**.
+2. Tipo de autenticação: **NONE**. O coletor não assina requisições, então com `AWS_IAM` o envio falha com 403.
+3. CORS: não é necessário (chamada servidor → servidor).
+4. Copie a URL gerada (formato `https://<id>.lambda-url.us-east-1.on.aws/`). Ela é a que o instalador do coletor pede (seção 8.2).
+Regras aplicadas pelo handler:
+ 
+- Só aceita `POST`.
+- Exige o parâmetro `filename` na query string.
+- Só grava chaves que começam com `PREFIXO_BRONZE` (padrão `01-bronze/`).
+- Rejeita caminhos com `..` (path traversal).
+- Limite de **6 MB** por requisição (limite da Function URL).
+### 7.5 Variáveis de ambiente
+ 
+Defina em cada função (Configuration → Environment variables). Não use `testes-lambda`; use os prefixos definitivos:
+ 
+| Chave | Valor exemplo | `montech-ingest` | `montech-bronze2silver` | `montech-silver2gold` |
+|---|---|:---:|:---:|:---:|
+| `NOME_BUCKET` | `montech-datalake-XXXX` | ✔ | ✔ | ✔ |
+| `PREFIXO_BRONZE` | `01-bronze` (padrão, opcional) | ✔ | | |
+| `PREFIXO_SILVER` | `02-silver` | | ✔ | ✔ |
+| `PREFIXO_GOLD` | `03-gold` | | | ✔ |
+ 
+---
+ 
+## 8. Inicialização e validação
+ 
+### 8.1 Instalar o coletor no servidor e testar o fluxo completo
+ 
+1. No servidor do cliente, rode `bash instalar-coletor.sh` (com `Script_Extracao.py` e `Organizador.py` na mesma pasta). Informe a **URL da Lambda de ingestão** (7.4) e os dados do MySQL. O instalador grava a URL em `URL_LAMBDA` e testa o acesso à Lambda sem enviar arquivo.
+2. Para trocar a URL depois: `~/montech-coletor/instalar-coletor.sh --lambda`.
+3. Inicie a coleta: `tmux new -s montech` e depois `~/montech-coletor/iniciar_coleta.sh`. Deixe gerar alguns registros.
+4. Pare com `Ctrl+C`: o coletor reenvia os arquivos pendentes.
+5. Confira no host autorizado ou no console:
 ```bash
 aws s3 ls s3://SEU_BUCKET/01-bronze/ --recursive --region us-east-1
+aws s3 ls s3://SEU_BUCKET/03-gold/ --recursive --region us-east-1
+aws logs tail /aws/lambda/montech-ingest --since 10m --region us-east-1
+aws logs tail /aws/lambda/montech-silver2gold --since 10m --region us-east-1
 ```
-
-Crie um evento privado na aba Testar. Substitua o bucket e a chave por um CSV existente, sem `s3://` no campo `chave`:
-
-```json
-{
-  "bucket": "SEU_BUCKET",
-  "chave": "01-bronze/ID_EMPRESA/ID_AEROPORTO/TOKEN/AAAA-MM-DD/ARQUIVO.csv"
-}
+ 
+> Se `URL_LAMBDA` estiver vazia, o coletor mantém os CSVs apenas localmente e não envia nada.
+ 
+### 8.2 Reconstrução de histórico (replay controlado)
+ 
+Se já existem CSVs na Bronze, use um host autorizado (com `lambda:InvokeFunction` e `s3:ListBucket`) para invocar a `montech-bronze2silver` para cada CSV de `01-bronze/`:
+ 
+```python
+import json, boto3
+BUCKET = 'SEU_BUCKET'; FUNC = 'montech-bronze2silver'; R = 'us-east-1'
+s3 = boto3.client('s3', region_name=R); lam = boto3.client('lambda', region_name=R)
+keys = []
+for page in s3.get_paginator('list_objects_v2').paginate(Bucket=BUCKET, Prefix='01-bronze/'):
+    for o in page.get('Contents', []):
+        if o['Key'].endswith('.csv'): keys.append(o['Key'])
+for k in sorted(keys):
+    lam.invoke(FunctionName=FUNC, InvocationType='RequestResponse',
+               Payload=json.dumps({'bucket': BUCKET, 'chave': k}).encode())
+    print('invoked', k)
 ```
+ 
+Isso preenche `02-silver/` a partir da Bronze sem depender de gatilho. Só depois de validar a Silver, processe a Gold com a `montech-silver2gold`.
+ 
+---
 
-Salve e execute. Espere `modo: incremental_por_dia`, `arquivos_bronze_lidos: 1` e o total consolidado em `resultados_por_dia`. Repita o mesmo evento: a quantidade de coletas deve permanecer igual. O número de linhas recebidas no evento é diferente do total acumulado na Silver.
+# 9. Regras, manutenção e solução de erros
 
-Para testar o formato S3, crie outro evento, substituindo os mesmos valores:
+## 9.1 Panorama rápido
 
-```json
-{
-  "Records": [
-    {
-      "eventSource": "aws:s3",
-      "eventName": "ObjectCreated:Put",
-      "s3": {
-        "bucket": {"name": "SEU_BUCKET"},
-        "object": {
-          "key": "01-bronze/ID_EMPRESA/ID_AEROPORTO/TOKEN/AAAA-MM-DD/ARQUIVO.csv"
-        }
-      }
-    }
-  ]
-}
-```
+- O coletor roda localmente e envia CSV via **Function URL**.
+- A **Lambda** processa a camada Silver e gera os artefatos Gold.
+- A EC2 normalmente usa um **Instance Profile** (`LabInstanceProfile`) para obter credenciais; no Windows, o AWS CLI usa `~/.aws/credentials`.
 
-Espere `arquivos_processados: 1`. Vários arquivos do mesmo servidor no mesmo evento devem ser incorporados individualmente; a deduplicação do handler inclui a chave do objeto.
+## 9.2 Renovar credenciais no Windows (PowerShell)
 
-### 8.4 Conectar o gatilho real — console AWS
-
-Na função → Adicionar gatilho → S3:
-
-| Campo | Valor |
-| --- | --- |
-| Bucket | Seu bucket na região `us-east-1` |
-| Tipos de evento | Todos os eventos de criação de objeto |
-| Prefixo | `01-bronze/` |
-| Sufixo | `.csv` |
-
-Confira os filtros, marque o reconhecimento do aviso de invocação recursiva e clique em Adicionar. Não deixe o prefixo vazio: a função escreve no mesmo bucket e suas saídas precisam ficar fora do gatilho. O gatilho não executa automaticamente os CSVs que já existiam antes de sua criação.
-
-### 8.5 Teste automático nas pastas de teste
-
-Sem clicar em Testar e sem executar `etl_1.py`:
-
-- **8.5.1** Inicie a captura no computador local.
-- **8.5.2** Deixe aproximadamente 35 segundos.
-- **8.5.3** Encerre com `Ctrl+C` para enviar o arquivo final.
-- **8.5.4** Anote quantas coletas e uploads foram concluídos.
-- **8.5.5** Confira CloudWatch em Lambda → Monitor → logs, e o JSON de saída.
-
-```bash
-aws s3 ls s3://SEU_BUCKET/testes-lambda/03-gold/ --recursive --region us-east-1
-aws s3 cp "s3://SEU_BUCKET/testes-lambda/03-gold/ID_EMPRESA/ID_AEROPORTO/TOKEN/AAAA-MM-DD/TOKEN-AAAA-MM-DD.json" - --region us-east-1
-```
-
-Troque todos os identificadores. A quantidade de coletas por hora deve aumentar pelo número de linhas novas válidas, sem repetir as antigas. Se houver mais de uma hora, some `Qtd_Coletas` dos objetos do dia. Aguarde o processamento dos eventos e consulte novamente se o último upload acabou de terminar.
-
-Logs por CLI, quando a identidade tiver permissão:
-
-```bash
-aws logs tail /aws/lambda/Montech-lambda --since 10m --region us-east-1
-```
-
-### 8.6 Ativar os destinos definitivos
-
-Com a captura parada e as execuções pendentes concluídas:
-
-- **8.6.1** Confira a base completa de teste e os resultados dos testes.
-- **8.6.2** Na primeira migração, copie a Silver validada para o prefixo definitivo, usando a mesma estrutura de IDs/token/data. O comando abaixo copia todas as Silvers de teste; use apenas na inicialização planejada, depois de comparar a base, pois substitui objetos de mesmo nome no destino.
-
-  ```bash
-  aws s3 cp s3://SEU_BUCKET/testes-lambda/02-silver/ s3://SEU_BUCKET/02-silver/ --recursive --region us-east-1
-  ```
-
-- **8.6.3** Em Variáveis de ambiente, mantenha `NOME_BUCKET` e altere `PREFIXO_SILVER=02-silver` e `PREFIXO_GOLD=03-gold`. O código final precisa aceitar esse par também; alterar apenas as variáveis em uma versão que bloqueia produção gera erro.
-- **8.6.4** Execute uma vez o replay da seção 8.2 com esses destinos para regenerar a Gold definitiva de todos os dias a partir da base validada. Para verificar só um dia afetado, o evento manual pode apontar para um arquivo daquele dia.
-- **8.6.5** Confira os caminhos `02-silver/` e `03-gold/` nos logs.
-- **8.6.6** Reative o gatilho se ele foi desativado e teste novos uploads reais, sem invocação manual. Confira o aumento esperado das coletas na Gold definitiva.
-
-
-## 9. Regras, manutenção e solução de erros
-
-### 9.2 Renovar credenciais no Windows — PowerShell
-
-```powershell
-notepad "$env:USERPROFILE\.aws\credentials"
-```
-
-Substitua os três valores da sessão e salve, preservando `[default]`:
+Edite o arquivo `~\.aws\credentials`:
 
 ```ini
 [default]
@@ -679,13 +565,15 @@ aws_secret_access_key=SECRET_KEY_ATUAL
 aws_session_token=SESSION_TOKEN_ATUAL
 ```
 
+Valide:
+
 ```powershell
 aws sts get-caller-identity --region us-east-1
 ```
 
-O arquivo se chama `credentials`, sem `.txt`. Não cole credenciais no chat, no README ou em commits. Se o CLI funcionar e Python não, confira configurações AWS no processo/launcher, incluindo `AWS_SHARED_CREDENTIALS_FILE` e `AWS_CONFIG_FILE`, e reinicie a captura depois da renovação.
+> **Importante:** renove sempre os **três valores juntos**. Nunca exponha essas credenciais em chats ou commits.
 
-### 9.3 Renovar credenciais na EC2 — Bash
+## 9.3 Renovar credenciais na EC2 (Bash)
 
 ```bash
 mkdir -p ~/.aws
@@ -694,25 +582,28 @@ chmod 600 ~/.aws/credentials
 aws sts get-caller-identity --region us-east-1
 ```
 
-Use o mesmo formato do bloco acima. Não rode novamente o criador de Data Lake só para renovar credenciais. Se o coletor Linux usa arquivos isolados em sua própria pasta, renove os arquivos que o launcher aponta; use a opção `--credenciais` do instalador somente se ela estiver presente nessa versão. Credenciais salvas no Windows não se propagam para a EC2. O Lambda utiliza o papel de execução; não recebe automaticamente essas credenciais locais.
+> Se a EC2 usa um Instance Profile, **não é necessário** arquivo de credenciais.
 
-### 9.4 Erros comuns
+## 9.4 Erros comuns e ações rápidas
 
-| Mensagem/sintoma | Verificação e ação |
-| --- | --- |
-| `aws` não reconhecido | Instale AWS CLI, reabra o terminal e confira `aws --version`. |
-| `NoCredentials` | Confira nome/local do arquivo, perfil e variáveis AWS do processo. |
-| `InvalidToken` / token expirado | Renove o trio inteiro da mesma sessão; confira valores que sobrescrevem o arquivo. |
-| `No module named pandas` no Lambda | Crie e anexe a layer; confirme Python 3.14 e x86_64 tanto na função quanto na layer. |
-| Erro de binário/import NumPy | Refaça em pasta vazia usando a imagem oficial do Lambda; não use pacotes do Windows. |
-| `AccessDenied` | Verifique identidade local, permissões do papel Lambda e bucket da conta correta; permissões são distintas para cada ambiente. |
-| 404 / `Not Found` ao ler Gold | Confira bucket, prefixo de teste/definitivo, IDs, token, data e nome exato; uma pasta vazia não é um JSON. |
-| Upload concluiu, Gold não mudou | Confira gatilho, prefixo/sufixo, logs, variáveis e base Silver. Não conclua sucesso apenas pela mensagem de upload. |
-| Falta de conexão MySQL | Confira EC2/container, Security Group para seu IP público, `.env`, usuário/senha, SQL e eventual túnel SSH. |
-| `DB_HOST` | É IP/hostname; 3306 é a porta, não o host. |
-| Limite de 500 arquivos | Versão antiga ainda implantada; confira código final incremental e Deploy. |
-| Gold com total menor após migração | A base Silver usada na troca estava incompleta; pare novos escritores e reconstrua em destino controlado a partir da bronze. |
-| `Coletas conflitantes no mesmo timestamp` | Investigue dois produtores com mesmo token, relógio/reinício ou fonte alterada; não remova a validação para esconder o conflito. |
+| Sintoma | Verificação rápida |
+|---|---|
+| `aws` não reconhecido | Instale o AWS CLI v2 e reinicie o terminal (`aws --version`). |
+| `NoCredentials` | Confira `~/.aws/credentials`, variáveis `AWS_*` e o Instance Profile. |
+| `InvalidToken` | Tokens expirados: renove Access Key, Secret Key e Session Token. |
+| `No module named pandas` na Lambda | Confirme a layer anexada e a compatibilidade de runtime/arquitetura. |
+| `AccessDenied` no S3 | Confirme as permissões do role da Lambda e se o bucket está na mesma conta. |
+| Upload concluiu, mas a Gold não mudou | Verifique `PREFIXO_SILVER`, `PREFIXO_GOLD` e os logs da Lambda. |
+| Falha ao conectar no MySQL | Teste o Security Group/porta `3306` e o `.env` com `DB_HOST` correto. |
+| `URL can't contain control characters` | Há espaço ou quebra de linha na `URL_LAMBDA`. |
+| `URL_LAMBDA não foi configurada` | A constante `URL_LAMBDA` está vazia. |
+| `Falha ao enviar ...` | Lambda fora do ar, URL incorreta ou servidor sem rede. O arquivo continua local e é reenviado depois. |
+| HTTP 403 na ingestão | Function URL com autenticação `AWS_IAM` ou sem permissão pública. Use `NONE`. |
+| Ingestão responde, mas nada aparece em `01-bronze/` | O role da `montech-ingest` não tem `PutObject`, ou `NOME_BUCKET` está incorreto. |
+| Arquivo chega na Bronze, mas não gera Silver | Gatilho S3 da `montech-bronze2silver` ausente (prefixo `01-bronze/`, sufixo `.csv`). |
+| Temperatura da CPU vazia | No Windows, terminal sem permissão de Administrador, ou a máquina não expõe o sensor. |
+| `Erro ao conectar ao banco de dados` | Credenciais do `.env` incorretas ou MySQL inacessível. |
+| `Servidor sem empresa/aeroporto definido` | O token não tem empresa e aeroporto vinculados no banco. |
 
 ## 10. Referências oficiais
 
