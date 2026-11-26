@@ -15,8 +15,8 @@ Passo a passo automatizado e consolidado para implantação da infraestrutura: V
 | **6.1** | Windows (PowerShell) | Coletor de métricas no Windows |
 | **6.2** | Linux (Bash) | Coletor de métricas no Linux |
 | **7** | VM + console AWS | Construção da layer e criação da função Lambda |
-| **8** | Console AWS + computador local | Carga inicial, gatilho S3, testes e ativação definitiva |
-| **9** | VM / Windows | Regras, manutenção (renovação de credenciais), solução de erros e entrega |
+| **8** | Testes locais e inicialização real | Carga inicial |
+| **9** | VM / Windows | Regras, manutenção (renovação de credenciais), possíveis problemas, solução de erros e entrega |
 | **10** | Web | Referências oficiais |
 
 ---
